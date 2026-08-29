@@ -207,7 +207,26 @@ def process_inbound_event(
                 db.flush()
 
         # 6. Event-specific business logic
-        if event_type == "payment.failed" or status == "failed":
+
+        # 6a. Phase 3 (ACT) — Payment Link recovery verification.
+        # MUST be checked before the generic "captured" branch: a payment_link.paid
+        # event also carries a nested captured payment entity.
+        if event_type == "payment_link.paid" or normalized.get("payment_link_status") == "paid":
+            try:
+                from services.actions.verification import verify_payment_link_recovery
+                matched = verify_payment_link_recovery(
+                    db, normalized, merchant_id, revenue_event.razorpay_event_id
+                )
+                if matched is not None:
+                    recovery_case = db.query(RecoveryCase).filter(
+                        RecoveryCase.id == matched.recovery_case_id
+                    ).first()
+            except Exception:
+                logger.exception(
+                    "payment_link.paid verification failed (non-fatal for Phase 1)"
+                )
+
+        elif event_type == "payment.failed" or status == "failed":
             # Check if a recovery case already exists for this payment
             existing_case = db.query(RecoveryCase).filter_by(payment_id=payment.id).first() if payment else None
             if not existing_case:

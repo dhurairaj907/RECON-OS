@@ -191,6 +191,92 @@ export interface IntelligenceMetrics {
   ai_configured: boolean;
 }
 
+/* ------------------------------------------------------------------ */
+/* Phase 3 (ACT) — Actions                                             */
+/* ------------------------------------------------------------------ */
+
+export interface ActionProposal {
+  proposable: boolean;
+  action_type?: string | null;
+  recovery_case_id: string;
+  case_number: string;
+  amount?: string | null;
+  currency: string;
+  reference_id?: string | null;
+  reason: string;
+  strategy_action?: string | null;
+  policy_verdict?: string | null;
+  not_proposable_reason?: string | null;
+  test_mode: boolean;
+  razorpay_configured: boolean;
+}
+
+export type ActionUiState =
+  | "READY"
+  | "APPROVED"
+  | "EXECUTING"
+  | "EXECUTED"
+  | "WAITING_FOR_PAYMENT"
+  | "RECOVERED"
+  | "FAILED"
+  | "BLOCKED"
+  | "NEEDS_APPROVAL"
+  | "EXPIRED"
+  | "CANCELLED"
+  | string;
+
+export interface RecoveryAction {
+  id: string;
+  recovery_case_id: string;
+  case_number?: string | null;
+  action_type: string;
+  status: string;
+  outcome: string;
+  ui_state?: ActionUiState | null;
+  reference_id?: string | null;
+  provider?: string | null;
+  provider_action_id?: string | null;
+  provider_status?: string | null;
+  payment_link_url?: string | null;
+  amount?: string | null;
+  currency: string;
+  recovered_amount: string;
+  strategy_action?: string | null;
+  policy_verdict?: string | null;
+  blocked_reason?: string | null;
+  error_code?: string | null;
+  error_message?: string | null;
+  requested_at?: string | null;
+  approved_at?: string | null;
+  executed_at?: string | null;
+  completed_at?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface ProposeActionResponse {
+  proposal: ActionProposal;
+  action: RecoveryAction | null;
+}
+
+export interface ExecuteActionResponse {
+  ok: boolean;
+  message: string;
+  action: RecoveryAction;
+}
+
+export interface ActionMetrics {
+  actions_proposed: number;
+  actions_executed: number;
+  actions_blocked: number;
+  payment_links_created: number;
+  pending_recoveries: number;
+  revenue_recovered: string;
+  recovery_rate: number;
+  test_mode: boolean;
+  razorpay_configured: boolean;
+}
+
 export interface IntelligenceListItem {
   case_id: string;
   case_number: string;
@@ -242,6 +328,7 @@ export interface DashboardMetrics {
   recent_cases: RecoveryCase[];
   daily_trends: DailyTrendItem[];
   intelligence?: IntelligenceMetrics | null;
+  actions?: ActionMetrics | null;
 }
 
 export interface PaginatedResponse<T> {

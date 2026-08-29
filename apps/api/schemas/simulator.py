@@ -30,3 +30,14 @@ class SimulateEventResponse(BaseModel):
     processing_status: str
     case_number: Optional[str] = None
     message: str
+
+
+class SimulatePaymentLinkPaidRequest(BaseModel):
+    """
+    Phase 3 demo helper — simulate the `payment_link.paid` webhook for a RECON
+    recovery action so the recovery loop can be completed end-to-end without a
+    real Razorpay Test Mode payment. Runs through the real event pipeline.
+    """
+    action_id: Optional[str] = Field(default=None, description="RECON action id")
+    reference_id: Optional[str] = Field(default=None, description="RECON reference id, e.g. RECON-RC10001-ACT001")
+    amount: Optional[Decimal] = Field(default=None, description="Override paid amount (defaults to the action amount)")

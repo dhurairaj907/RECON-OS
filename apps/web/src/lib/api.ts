@@ -10,6 +10,9 @@ import {
   SimulateEventResponse,
   IntelligenceEnvelope,
   IntelligenceListItem,
+  RecoveryAction,
+  ProposeActionResponse,
+  ExecuteActionResponse,
 } from "./types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -117,11 +120,33 @@ export const api = {
     return fetcher<PaginatedResponse<IntelligenceListItem>>(`/api/v1/intelligence?${q.toString()}`);
   },
 
+  // Actions (Phase 3 — ACT)
+  getCaseActions: (caseId: string) =>
+    fetcher<{ items: RecoveryAction[]; total: number }>(
+      `/api/v1/recovery-cases/${caseId}/actions`
+    ),
+  proposeAction: (caseId: string) =>
+    fetcher<ProposeActionResponse>(
+      `/api/v1/recovery-cases/${caseId}/actions/propose`,
+      { method: "POST" }
+    ),
+  executeAction: (actionId: string) =>
+    fetcher<ExecuteActionResponse>(`/api/v1/actions/${actionId}/execute`, {
+      method: "POST",
+    }),
+  getAction: (actionId: string) =>
+    fetcher<RecoveryAction>(`/api/v1/actions/${actionId}`),
+
   // Simulator
   triggerSimulation: (request: SimulateEventRequest) =>
     fetcher<SimulateEventResponse>("/api/v1/simulator/events", {
       method: "POST",
       body: JSON.stringify(request),
+    }),
+  simulatePaymentLinkPaid: (actionId: string) =>
+    fetcher<SimulateEventResponse>("/api/v1/simulator/payment-link-paid", {
+      method: "POST",
+      body: JSON.stringify({ action_id: actionId }),
     }),
 
   // Health

@@ -11,6 +11,7 @@ from models.revenue_event import RevenueEvent
 from models.recovery_case import RecoveryCase
 from models.audit_log import AuditLog
 from models.case_intelligence import CaseIntelligence
+from models.recovery_action import RecoveryAction
 
 __all__ = [
     "Merchant",
@@ -20,4 +21,5 @@ __all__ = [
     "RecoveryCase",
     "AuditLog",
     "CaseIntelligence",
+    "RecoveryAction",
 ]

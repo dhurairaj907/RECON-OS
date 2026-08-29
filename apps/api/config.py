@@ -26,6 +26,13 @@ class Settings(BaseSettings):
     RAZORPAY_KEY_SECRET: str = ""
     RAZORPAY_WEBHOOK_SECRET: str = ""
 
+    # --- Phase 3 (ACT): Razorpay outbound (Payment Links) ---
+    # TEST MODE ONLY. When False, action execution is refused (no accidental
+    # live financial transactions). Credentials, if present, must be rzp_test_*.
+    RAZORPAY_TEST_MODE: bool = True
+    RAZORPAY_API_BASE: str = "https://api.razorpay.com/v1"
+    RAZORPAY_TIMEOUT_SECONDS: float = 10.0
+
     # --- Application ---
     LOG_LEVEL: str = "INFO"
     CORS_ORIGINS: List[str] = ["http://localhost:3000"]

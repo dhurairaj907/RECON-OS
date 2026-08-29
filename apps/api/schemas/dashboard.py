@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from schemas.event import RevenueEventResponse
 from schemas.recovery_case import RecoveryCaseResponse
 from schemas.intelligence import IntelligenceMetrics
+from schemas.action import ActionMetrics
 
 
 class DailyTrendItem(BaseModel):
@@ -33,3 +34,5 @@ class DashboardMetrics(BaseModel):
     daily_trends: List[DailyTrendItem] = []
     # Phase 2 (THINK): None until at least one case has been analysed.
     intelligence: Optional[IntelligenceMetrics] = None
+    # Phase 3 (ACT): None until at least one recovery action exists.
+    actions: Optional[ActionMetrics] = None

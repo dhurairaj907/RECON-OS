@@ -14,10 +14,14 @@ import {
   ArrowRight,
   Sparkles,
   Cpu,
+  Zap,
+  ExternalLink,
+  Link2,
+  CheckCircle2,
 } from "lucide-react";
 import { api } from "@/lib/api";
-import { IntelligenceEnvelope } from "@/lib/types";
-import { cn, formatDateTime } from "@/lib/utils";
+import { IntelligenceEnvelope, RecoveryAction } from "@/lib/types";
+import { cn, formatDateTime, formatINR } from "@/lib/utils";
 
 interface Props {
   caseId: string;
@@ -98,6 +102,241 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
     <h4 className="text-[11px] font-mono font-semibold text-slate-300 uppercase tracking-widest">
       {children}
     </h4>
+  );
+}
+
+/* ---------- Phase 3 (ACT) — Action section ---------------------------- */
+
+const ELIGIBLE_STRATEGIES = ["RETRY_NOW", "RETRY_DELAYED", "SEND_PAYMENT_LINK"];
+
+const actionStateStyle: Record<string, string> = {
+  RECOVERED: "text-emerald-400 border-status-success-border bg-status-success-bg",
+  WAITING_FOR_PAYMENT: "text-blue-400 border-status-info-border bg-status-info-bg",
+  EXECUTED: "text-blue-400 border-status-info-border bg-status-info-bg",
+  EXECUTING: "text-blue-400 border-status-info-border bg-status-info-bg",
+  APPROVED: "text-emerald-400 border-status-success-border bg-status-success-bg",
+  READY: "text-slate-300 border-border bg-surface-elevated",
+  BLOCKED: "text-rose-400 border-status-danger-border bg-status-danger-bg",
+  NEEDS_APPROVAL: "text-amber-400 border-status-warning-border bg-status-warning-bg",
+  FAILED: "text-rose-400 border-status-danger-border bg-status-danger-bg",
+};
+
+function ActionSection({ env, caseId }: { env: IntelligenceEnvelope; caseId: string }) {
+  const { data: actionsData, mutate: mutateActions } = useSWR(
+    caseId ? `/api/v1/recovery-cases/${caseId}/actions` : null,
+    () => api.getCaseActions(caseId),
+    { refreshInterval: 4000 }
+  );
+  const [busy, setBusy] = useState<null | string>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const action: RecoveryAction | undefined = actionsData?.items?.[0];
+
+  const strategyAction = env.strategy?.action ?? "";
+  const verdict = env.policy?.verdict ?? "";
+  const amount = env.context?.amount ?? action?.amount ?? null;
+  const eligible = ELIGIBLE_STRATEGIES.includes(strategyAction);
+
+  const run = async (fn: () => Promise<any>, tag: string) => {
+    setBusy(tag);
+    setErr(null);
+    try {
+      await fn();
+      await mutateActions();
+    } catch (e: any) {
+      setErr(e?.message || "Action request failed");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const createLink = () =>
+    run(async () => {
+      const proposed = await api.proposeAction(caseId);
+      if (!proposed.action) throw new Error(proposed.proposal.reason);
+      await api.executeAction(proposed.action.id);
+    }, "create");
+
+  const retry = () =>
+    run(async () => {
+      if (action) await api.executeAction(action.id);
+    }, "retry");
+
+  const simulatePaid = () =>
+    run(async () => {
+      if (action) await api.simulatePaymentLinkPaid(action.id);
+    }, "simulate");
+
+  const uiState = action?.ui_state || "READY";
+
+  return (
+    <div className="space-y-3 border-t border-border/60 pt-4">
+      <div className="flex items-center justify-between">
+        <SectionTitle>Action</SectionTitle>
+        <span className="inline-flex items-center gap-1 text-[10px] font-mono text-slate-500">
+          <Zap className="w-3 h-3 text-amber-400" /> RAZORPAY TEST MODE
+        </span>
+      </div>
+
+      {/* No action yet */}
+      {!action && (
+        <>
+          {!eligible ? (
+            <p className="text-[11px] text-slate-500 font-mono">
+              No automated recovery action available for strategy{" "}
+              <span className="text-slate-300">{strategyAction || "—"}</span>.
+              Phase 3 executes CREATE_PAYMENT_LINK only.
+            </p>
+          ) : verdict === "NEEDS_APPROVAL" ? (
+            <div className="rounded border border-status-warning-border/50 bg-status-warning-bg px-3 py-2">
+              <p className="text-[11px] font-mono text-amber-400 font-semibold">
+                ACTION REQUIRES APPROVAL
+              </p>
+              <p className="text-[11px] text-slate-400 mt-0.5">
+                {env.policy?.reason} — execution is blocked until a human approves.
+              </p>
+            </div>
+          ) : verdict === "REJECTED" ? (
+            <p className="text-[11px] text-rose-400 font-mono">
+              Policy REJECTED — no recovery action will be executed.
+            </p>
+          ) : (
+            <>
+              <div className="rounded-lg border border-border bg-surface-subtle p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-mono font-semibold text-blue-400">
+                    CREATE PAYMENT LINK
+                  </span>
+                  <span className="inline-flex items-center gap-1 text-[10px] font-mono text-emerald-400">
+                    <Check className="w-3 h-3" /> POLICY APPROVED
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-[11px] font-mono">
+                  <span className="text-slate-500">Amount</span>
+                  <span className="text-white font-semibold tabular-nums">
+                    {formatINR(amount)}
+                  </span>
+                </div>
+                <p className="text-[10px] text-slate-600 font-mono leading-relaxed">
+                  A failed Razorpay payment cannot be re-charged via API. The
+                  executable recovery action is a Test Mode Payment Link the
+                  customer pays on. Policy is re-checked server-side before any
+                  Razorpay call.
+                </p>
+              </div>
+              <button
+                onClick={createLink}
+                disabled={busy !== null}
+                className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg bg-accent text-white text-xs font-mono font-medium hover:bg-accent-hover transition-colors disabled:opacity-50"
+              >
+                {busy === "create" ? (
+                  <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Creating recovery action…</>
+                ) : (
+                  <><Link2 className="w-3.5 h-3.5" /> Create Payment Link</>
+                )}
+              </button>
+            </>
+          )}
+        </>
+      )}
+
+      {/* Action exists */}
+      {action && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <span
+              className={cn(
+                "inline-flex items-center gap-1.5 text-xs font-mono font-semibold px-2.5 py-1 rounded border",
+                actionStateStyle[uiState] || actionStateStyle.READY
+              )}
+            >
+              {uiState === "RECOVERED" ? <CheckCircle2 className="w-3.5 h-3.5" /> :
+               uiState === "BLOCKED" || uiState === "FAILED" ? <Ban className="w-3.5 h-3.5" /> :
+               uiState === "NEEDS_APPROVAL" ? <AlertTriangle className="w-3.5 h-3.5" /> :
+               <Activity className="w-3.5 h-3.5" />}
+              {uiState.replace(/_/g, " ")}
+            </span>
+            <span className="text-[10px] font-mono text-slate-500">{action.action_type}</span>
+          </div>
+
+          {(uiState === "BLOCKED" || uiState === "NEEDS_APPROVAL" || uiState === "FAILED") && (
+            <div className="rounded border border-status-danger-border/40 bg-status-danger-bg/40 px-3 py-2">
+              <p className="text-[11px] font-mono text-rose-300">
+                {action.blocked_reason || action.error_code || "Execution did not complete"}
+              </p>
+              {action.error_message && (
+                <p className="text-[11px] text-slate-400 mt-0.5">{action.error_message}</p>
+              )}
+            </div>
+          )}
+
+          {action.payment_link_url && (
+            <div className="rounded-lg border border-border bg-surface-subtle p-3 space-y-2 text-[11px] font-mono">
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500">Payment Link</span>
+                <a
+                  href={action.payment_link_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 text-accent hover:text-accent-hover"
+                >
+                  Open Payment Link <ExternalLink className="w-3 h-3" />
+                </a>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500">Reference ID</span>
+                <span className="text-slate-300">{action.reference_id}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500">Amount</span>
+                <span className="text-white tabular-nums">{formatINR(action.amount)}</span>
+              </div>
+              {uiState === "RECOVERED" && (
+                <div className="flex items-center justify-between border-t border-border/60 pt-2">
+                  <span className="text-slate-500">Recovered</span>
+                  <span className="text-emerald-400 font-semibold tabular-nums">
+                    {formatINR(action.recovered_amount)}
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {uiState === "WAITING_FOR_PAYMENT" && (
+            <p className="text-[10px] font-mono text-slate-600">
+              Revenue is <span className="text-slate-400">NOT</span> counted as recovered
+              until a <span className="text-slate-400">payment_link.paid</span> webhook confirms payment.
+            </p>
+          )}
+
+          <div className="flex flex-wrap items-center gap-2">
+            {(uiState === "BLOCKED" || uiState === "FAILED") && (
+              <button
+                onClick={retry}
+                disabled={busy !== null}
+                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border bg-surface-subtle text-[11px] font-mono text-slate-300 hover:text-white hover:bg-surface-elevated transition-colors disabled:opacity-50"
+              >
+                {busy === "retry" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Activity className="w-3 h-3" />}
+                Re-run execution
+              </button>
+            )}
+            {uiState === "WAITING_FOR_PAYMENT" && (
+              <button
+                onClick={simulatePaid}
+                disabled={busy !== null}
+                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border bg-surface-subtle text-[11px] font-mono text-slate-400 hover:text-white hover:bg-surface-elevated transition-colors disabled:opacity-50"
+                title="Demo: simulate the payment_link.paid webhook"
+              >
+                {busy === "simulate" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
+                Simulate test payment
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {err && <p className="text-[11px] text-rose-400 font-mono">{err}</p>}
+    </div>
   );
 }
 
@@ -362,7 +601,7 @@ export function IntelligencePanel({ caseId, caseNumber }: Props) {
           </div>
         )}
         <p className="text-[10px] text-slate-600 font-mono">
-          Recommendation only — execution is Phase 3 and gated by the Policy Engine below.
+          Recommendation only — gated by the Policy Engine and Action Executor below.
         </p>
       </div>
 
@@ -406,10 +645,13 @@ export function IntelligencePanel({ caseId, caseNumber }: Props) {
 
         {pol.allowed_actions?.length > 0 && (
           <p className="text-[10px] font-mono text-emerald-400/80">
-            allowed for automated execution (Phase 3): {pol.allowed_actions.join(", ")}
+            allowed for automated execution: {pol.allowed_actions.join(", ")}
           </p>
         )}
       </div>
+
+      {/* ACTION (Phase 3 — ACT) */}
+      <ActionSection env={env} caseId={caseId} />
 
       {/* SOURCE */}
       <div className="border-t border-border/60 pt-3 flex flex-wrap items-center justify-between gap-1 text-[10px] font-mono text-slate-500">

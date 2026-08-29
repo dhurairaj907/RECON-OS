@@ -160,6 +160,44 @@ export default function CommandCenterPage() {
             ))}
           </div>
         )}
+
+        {/* Phase 3 — ACT: recovery action metrics (real data only) */}
+        <div className="mt-4 border-t border-border pt-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <h3 className="text-xs font-semibold text-white tracking-wide font-mono uppercase">
+                Recovery Actions
+              </h3>
+              <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded border border-status-warning-border/50 bg-status-warning-bg text-amber-400 tracking-wide">
+                RAZORPAY {metrics?.actions?.test_mode === false ? "LIVE" : "TEST MODE"}
+              </span>
+            </div>
+          </div>
+          {!metrics?.actions ? (
+            <p className="text-xs text-slate-500 font-mono py-2">
+              No recovery actions yet. Open a policy-approved case and{" "}
+              <span className="text-slate-300">Create Payment Link</span>.
+            </p>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+              {[
+                { label: "Actions Executed", value: metrics.actions.actions_executed, tone: "text-white", currency: false },
+                { label: "Pending Recoveries", value: metrics.actions.pending_recoveries, tone: "text-blue-400", currency: false },
+                { label: "Revenue Recovered", value: formatINR(metrics.actions.revenue_recovered), tone: "text-emerald-400", currency: true },
+                { label: "Recovery Rate", value: `${Math.round((metrics.actions.recovery_rate || 0) * 100)}%`, tone: "text-slate-200", currency: true },
+              ].map((m) => (
+                <div key={m.label} className="rounded-lg border border-border bg-surface-subtle p-4">
+                  <div className={`text-2xl font-bold font-mono tabular-nums ${m.tone}`}>
+                    {m.value}
+                  </div>
+                  <div className="text-[11px] font-mono text-slate-400 mt-1 uppercase tracking-wider">
+                    {m.label}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Main Grid: Revenue Dynamics + Live Activity Feed */}

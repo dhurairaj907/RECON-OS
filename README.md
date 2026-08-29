@@ -250,5 +250,33 @@ The **diagnosis step only** can optionally be produced by an LLM (Google Gemini)
 - The Intelligence UI shows the real source: **AI-ENHANCED** / **DETERMINISTIC FALLBACK**
   / **DETERMINISTIC**.
 
-**Not in Phase 2 / 2.5:** any Razorpay API call, money movement, action execution, or
-human-approval workflow — those are Phase 3 (ACT).
+### Phase 3 — ACT (policy-gated recovery actions)
+
+Phase 3 adds ONE outbound action — a **Razorpay TEST MODE Payment Link** — behind the
+authoritative Policy Engine:
+
+```
+Strategy → Policy → ActionProposal → Action Executor → Razorpay Adapter → POST /v1/payment_links
+```
+
+- `POST /api/v1/recovery-cases/{id}/actions/propose` turns the deterministic
+  strategy/policy result into an `ActionProposal` (idempotent — one action per case).
+- `POST /api/v1/actions/{id}/execute` **re-loads the case and RE-EVALUATES the Policy
+  Engine server-side** before any Razorpay call. A frontend- or AI-supplied "approved"
+  value is never trusted. `NEEDS_APPROVAL` / `REJECTED` → execution BLOCKED.
+- **Test Mode only:** `RAZORPAY_TEST_MODE=true` (default) and an `rzp_test_*` key are
+  required. Missing credentials return `RAZORPAY_NOT_CONFIGURED` — the app never crashes.
+- **Idempotent:** unique `idempotency_key` + `reference_id` (`RECON-RC10001-ACT001`);
+  a Payment Link is never created twice.
+- **Creating a Payment Link is NOT revenue recovered.** The action is `EXECUTED /
+  outcome PENDING` until a `payment_link.paid` webhook is verified → `RECOVERED`,
+  the case is RESOLVED, and `amount_recovered` is set. Duplicate webhooks never
+  double-count.
+- Audit lifecycle: `ACTION_PROPOSED → ACTION_EXECUTION_STARTED → ACTION_POLICY_CHECKED
+  → ACTION_APPROVED / ACTION_BLOCKED → PAYMENT_LINK_CREATED → ACTION_EXECUTED →
+  RECOVERY_PENDING → RECOVERY_VERIFIED` (or `ACTION_EXECUTION_FAILED` / `RECOVERY_FAILED`).
+- Demo: `POST /api/v1/simulator/payment-link-paid` simulates the confirming webhook so
+  the loop completes without a real Test Mode payment.
+
+**Not in Phase 3:** live mode, refunds, payouts, card retries / direct capture of failed
+payments, SMS/email providers, a full human-approval workflow, or any Phase 4 learning.

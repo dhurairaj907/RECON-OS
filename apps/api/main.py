@@ -23,6 +23,7 @@ from routers import (
     simulator_router,
     health_router,
     intelligence_router,
+    actions_router,
 )
 
 
@@ -47,6 +48,16 @@ async def lifespan(app: FastAPI):
         logger.info("Database schema initialized and default merchant verified.")
     except Exception as e:
         logger.warning(f"Database auto-initialization skipped or deferred: {e}")
+
+    # Surface Phase 3 Razorpay config state at boot (booleans only — no secret).
+    # Settings are read from .env ONCE at process start; restart the backend
+    # after changing .env for new credentials to take effect.
+    _rzp_configured = bool(settings.RAZORPAY_KEY_ID and settings.RAZORPAY_KEY_SECRET)
+    _rzp_test_key = settings.RAZORPAY_KEY_ID.startswith("rzp_test_")
+    logger.info(
+        "Razorpay (Phase 3 ACT): configured=%s test_mode=%s test_key=%s",
+        _rzp_configured, settings.RAZORPAY_TEST_MODE, _rzp_test_key,
+    )
 
     yield
 
@@ -85,6 +96,7 @@ app.include_router(recovery_cases_router, prefix=API_V1_PREFIX)
 app.include_router(audit_logs_router, prefix=API_V1_PREFIX)
 app.include_router(simulator_router, prefix=API_V1_PREFIX)
 app.include_router(intelligence_router, prefix=API_V1_PREFIX)
+app.include_router(actions_router, prefix=API_V1_PREFIX)
 
 
 if __name__ == "__main__":

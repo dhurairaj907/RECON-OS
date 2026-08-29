@@ -18,10 +18,12 @@ from models.payment import Payment
 from models.revenue_event import RevenueEvent
 from models.recovery_case import RecoveryCase
 from models.case_intelligence import CaseIntelligence
+from models.recovery_action import RecoveryAction
 from schemas.dashboard import DashboardMetrics, DailyTrendItem
 from schemas.event import RevenueEventResponse
 from schemas.recovery_case import RecoveryCaseResponse
 from schemas.intelligence import IntelligenceMetrics
+from schemas.action import ActionMetrics
 
 
 def get_dashboard_metrics(db: Session, merchant_id: UUID) -> DashboardMetrics:
@@ -167,6 +169,35 @@ def get_dashboard_metrics(db: Session, merchant_id: UUID) -> DashboardMetrics:
             ai_configured=ai_configured,
         )
 
+    # 11. Phase 3 (ACT) — action / recovery metrics (real data only)
+    from integrations.razorpay.adapter import get_razorpay_adapter
+    adapter = get_razorpay_adapter()
+
+    action_rows = db.query(RecoveryAction).filter(
+        RecoveryAction.merchant_id == merchant_id
+    ).all()
+
+    action_metrics = None
+    if action_rows:
+        executed = [a for a in action_rows if a.status == "EXECUTED"]
+        recovered = [a for a in action_rows if (a.outcome or "") == "RECOVERED"]
+        revenue_recovered = sum(
+            (Decimal(a.recovered_amount or 0) for a in recovered), Decimal("0.00")
+        )
+        pending = [a for a in executed if (a.outcome or "") == "PENDING"]
+        recovery_rate = (len(recovered) / len(executed)) if executed else 0.0
+        action_metrics = ActionMetrics(
+            actions_proposed=sum(1 for a in action_rows if a.status == "PROPOSED"),
+            actions_executed=len(executed),
+            actions_blocked=sum(1 for a in action_rows if a.status == "BLOCKED"),
+            payment_links_created=sum(1 for a in action_rows if a.provider_action_id),
+            pending_recoveries=len(pending),
+            revenue_recovered=revenue_recovered,
+            recovery_rate=round(recovery_rate, 4),
+            test_mode=bool(adapter.test_mode),
+            razorpay_configured=adapter.is_configured(),
+        )
+
     return DashboardMetrics(
         revenue_at_risk=revenue_at_risk,
         revenue_secured=revenue_secured,
@@ -179,4 +210,5 @@ def get_dashboard_metrics(db: Session, merchant_id: UUID) -> DashboardMetrics:
         recent_cases=recent_cases,
         daily_trends=daily_trends,
         intelligence=intelligence_metrics,
+        actions=action_metrics,
     )

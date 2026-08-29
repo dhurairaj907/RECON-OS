@@ -12,6 +12,7 @@ from routers.audit_logs import router as audit_logs_router
 from routers.simulator import router as simulator_router
 from routers.health import router as health_router
 from routers.intelligence import router as intelligence_router
+from routers.actions import router as actions_router
 
 __all__ = [
     "webhooks_router",
@@ -24,4 +25,5 @@ __all__ = [
     "simulator_router",
     "health_router",
     "intelligence_router",
+    "actions_router",
 ]
