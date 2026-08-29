@@ -229,8 +229,26 @@ Recovery Case → Context Builder → Diagnosis → Recovery Prediction
   `NEEDS_APPROVAL` / `REJECTED`. Constants configurable via `POLICY_*` env vars.
 
 Enable automatic analysis with `INTELLIGENCE_ENABLED=true` (the `intelligence:analyze`
-endpoint works regardless). An **optional** LLM provider abstraction lives in
-`apps/api/integrations/llm/` — the system is fully functional with `LLM_ENABLED=false`.
+endpoint works regardless).
 
-**Not in Phase 2:** any Razorpay API call, money movement, action execution, or human-
-approval workflow — those are Phase 3 (ACT).
+### Phase 2.5 — optional AI-assisted diagnosis (Gemini)
+
+The **diagnosis step only** can optionally be produced by an LLM (Google Gemini) via
+`apps/api/integrations/llm/`. It is strictly bounded:
+
+- Enable with `LLM_ENABLED=true`, `LLM_PROVIDER=gemini`, `GEMINI_API_KEY=...` (server-side
+  only — never `NEXT_PUBLIC_*`, never in a response / log / DB row).
+- The LLM is asked for **structured JSON** validated against a strict Pydantic schema
+  (`AIDiagnosisSchema`). Invalid JSON / bad enum / out-of-range confidence / missing
+  fields / timeout / 429 / API error → **automatic deterministic fallback**. The system
+  is fully functional and demoable with `LLM_ENABLED=false`.
+- **Prediction and the Policy Engine stay 100% deterministic** and are not influenced by
+  the LLM or its confidence. The LLM has no field through which to authorise an action.
+- `CaseIntelligence` records `provider` (`DETERMINISTIC` | `GEMINI`), `provider_version`,
+  and `intelligence_version`. Audit events: `AI_DIAGNOSIS_STARTED` /
+  `AI_DIAGNOSIS_COMPLETED` / `AI_DIAGNOSIS_FALLBACK` / `AI_DIAGNOSIS_FAILED`.
+- The Intelligence UI shows the real source: **AI-ENHANCED** / **DETERMINISTIC FALLBACK**
+  / **DETERMINISTIC**.
+
+**Not in Phase 2 / 2.5:** any Razorpay API call, money movement, action execution, or
+human-approval workflow — those are Phase 3 (ACT).

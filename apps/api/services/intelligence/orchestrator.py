@@ -19,12 +19,13 @@ agent, and an LLM is never asked "what should run next".
 import logging
 
 import database
+from config import settings
 from models.audit_log import AuditLog
 from models.case_intelligence import CaseIntelligence
 from models.recovery_case import RecoveryCase
 from schemas.intelligence import VERDICT_TO_STATUS
+from services.intelligence.ai_diagnosis import diagnose_case
 from services.intelligence.context_builder import build_case_context
-from services.intelligence.diagnosis import diagnose
 from services.intelligence.policy_engine import evaluate_policy
 from services.intelligence.prediction import predict
 from services.intelligence.strategy import recommend_strategy
@@ -65,26 +66,66 @@ def run_intelligence(db, case_id, *, trigger: str = "manual") -> CaseIntelligenc
         .first()
     )
     version = (prev.version + 1) if prev else 1
+    intelligence_version = settings.INTELLIGENCE_VERSION
+    ai_configured = bool(settings.LLM_ENABLED and settings.LLM_PROVIDER)
 
     # INTELLIGENCE_STARTED is committed immediately so it survives a later failure
     _audit(
         db, merchant_id, case.id, "RECON_ENGINE", "INTELLIGENCE_STARTED",
         f"Intelligence pipeline started for {case.case_number} "
-        f"(v{version}, provider=DETERMINISTIC, trigger={trigger})",
-        {"trigger": trigger, "version": version, "provider": "DETERMINISTIC"},
+        f"(v{version}, intelligence_version={intelligence_version}, "
+        f"ai_configured={ai_configured}, trigger={trigger})",
+        {"trigger": trigger, "version": version,
+         "intelligence_version": intelligence_version,
+         "ai_configured": ai_configured},
     )
     db.commit()
 
     try:
         ctx = build_case_context(db, case)
 
-        diagnosis = diagnose(ctx)
+        # --- Diagnosis (optional AI assist; prediction/policy stay deterministic) ---
+        if ai_configured:
+            _audit(
+                db, merchant_id, case.id, "DIAGNOSIS_AGENT", "AI_DIAGNOSIS_STARTED",
+                f"Attempting AI-assisted diagnosis (provider={settings.LLM_PROVIDER})",
+                {"provider": settings.LLM_PROVIDER, "version": version},
+            )
+
+        diagnosis, ai_meta = diagnose_case(ctx)
+
+        if ai_meta.used_ai:
+            _audit(
+                db, merchant_id, case.id, "DIAGNOSIS_AGENT", "AI_DIAGNOSIS_COMPLETED",
+                f"AI diagnosis: {diagnosis.failure_category.value} "
+                f"(confidence {diagnosis.confidence:.0%}) via {ai_meta.provider} "
+                f"{ai_meta.provider_version}",
+                {"provider": ai_meta.provider,
+                 "provider_version": ai_meta.provider_version,
+                 "failure_category": diagnosis.failure_category.value,
+                 "confidence": diagnosis.confidence, "status": "completed"},
+            )
+        elif ai_meta.attempted:
+            action = "AI_DIAGNOSIS_FAILED" if ai_meta.error_type == "internal_error" else "AI_DIAGNOSIS_FALLBACK"
+            _audit(
+                db, merchant_id, case.id, "DIAGNOSIS_AGENT", action,
+                f"AI diagnosis unavailable — deterministic fallback used "
+                f"({ai_meta.fallback_reason})",
+                {"provider": settings.LLM_PROVIDER,
+                 "error_type": ai_meta.error_type,
+                 "fallback_reason": ai_meta.fallback_reason,
+                 "status": "fallback", "version": version},
+            )
+
         _audit(
             db, merchant_id, case.id, "DIAGNOSIS_AGENT", "DIAGNOSIS_COMPLETED",
             f"Diagnosis: {diagnosis.failure_category.value} "
-            f"(confidence {diagnosis.confidence:.0%}) — {diagnosis.probable_cause}",
+            f"(confidence {diagnosis.confidence:.0%}, source={diagnosis.provider}) "
+            f"— {diagnosis.probable_cause}",
             {"failure_category": diagnosis.failure_category.value,
              "confidence": diagnosis.confidence,
+             "provider": diagnosis.provider,
+             "provider_version": diagnosis.provider_version,
              "evidence": diagnosis.evidence},
         )
 
@@ -128,7 +169,9 @@ def run_intelligence(db, case_id, *, trigger: str = "manual") -> CaseIntelligenc
             recovery_case_id=case.id,
             merchant_id=merchant_id,
             status=lifecycle_status,
-            provider="DETERMINISTIC",
+            provider=diagnosis.provider,
+            provider_version=diagnosis.provider_version,
+            intelligence_version=intelligence_version,
             version=version,
             context_json=ctx.model_dump(mode="json"),
             diagnosis_json=diagnosis.model_dump(mode="json"),
@@ -149,10 +192,13 @@ def run_intelligence(db, case_id, *, trigger: str = "manual") -> CaseIntelligenc
         _audit(
             db, merchant_id, case.id, "RECON_ENGINE", "INTELLIGENCE_COMPLETED",
             f"Intelligence complete for {case.case_number}: "
-            f"{diagnosis.failure_category.value} / "
+            f"diagnosis={diagnosis.failure_category.value} (source={diagnosis.provider}) / "
             f"P(recovery)={prediction.recovery_probability:.0%} ({prediction.band.value}) / "
             f"{strategy.action.value} / policy={policy.verdict.value}",
             {"version": version, "status": lifecycle_status,
+             "provider": diagnosis.provider,
+             "provider_version": diagnosis.provider_version,
+             "intelligence_version": intelligence_version,
              "failure_category": diagnosis.failure_category.value,
              "recovery_probability": prediction.recovery_probability,
              "recommended_action": strategy.action.value,
@@ -174,6 +220,8 @@ def run_intelligence(db, case_id, *, trigger: str = "manual") -> CaseIntelligenc
             merchant_id=merchant_id,
             status="FAILED",
             provider="DETERMINISTIC",
+            provider_version=f"deterministic-{INTELLIGENCE_VERSION}",
+            intelligence_version=settings.INTELLIGENCE_VERSION,
             version=version,
             error_message=str(e)[:1000],
         )

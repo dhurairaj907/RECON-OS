@@ -150,6 +150,9 @@ def get_dashboard_metrics(db: Session, merchant_id: UUID) -> DashboardMetrics:
         if row.recovery_case_id not in latest_by_case:
             latest_by_case[row.recovery_case_id] = row
 
+    from config import settings as _settings
+    ai_configured = bool(_settings.LLM_ENABLED and _settings.LLM_PROVIDER)
+
     intelligence_metrics = None
     if latest_by_case:
         latest = list(latest_by_case.values())
@@ -159,6 +162,9 @@ def get_dashboard_metrics(db: Session, merchant_id: UUID) -> DashboardMetrics:
             needs_approval=sum(1 for r in latest if (r.policy_verdict or "") == "NEEDS_APPROVAL"),
             policy_rejected=sum(1 for r in latest if (r.policy_verdict or "") == "REJECTED"),
             policy_approved=sum(1 for r in latest if (r.policy_verdict or "") == "APPROVED"),
+            ai_enhanced=sum(1 for r in latest if (r.provider or "").upper() == "GEMINI"),
+            deterministic=sum(1 for r in latest if (r.provider or "").upper() != "GEMINI"),
+            ai_configured=ai_configured,
         )
 
     return DashboardMetrics(

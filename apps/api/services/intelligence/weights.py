@@ -12,7 +12,7 @@ pipeline always produces the same output.
 
 from decimal import Decimal
 
-INTELLIGENCE_VERSION = "1.0"
+INTELLIGENCE_VERSION = "2.5"
 
 # ---------------------------------------------------------------------------
 # Amount bands (INR) — used by prediction, strategy and risk classification

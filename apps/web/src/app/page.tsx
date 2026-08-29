@@ -109,11 +109,24 @@ export default function CommandCenterPage() {
       <div className="bg-surface rounded-lg border border-border p-5">
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h2 className="text-sm font-semibold text-white tracking-wide font-mono">
-              RECON INTELLIGENCE
-            </h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-sm font-semibold text-white tracking-wide font-mono">
+                RECON INTELLIGENCE
+              </h2>
+              <span
+                className={`text-[10px] font-mono font-semibold px-2 py-0.5 rounded border tracking-wide ${
+                  metrics?.intelligence?.ai_configured
+                    ? "text-emerald-400 border-status-success-border bg-status-success-bg"
+                    : "text-slate-400 border-border bg-surface-elevated"
+                }`}
+              >
+                {metrics?.intelligence?.ai_configured ? "AI-ENHANCED ANALYSIS" : "DETERMINISTIC ANALYSIS"}
+              </span>
+            </div>
             <p className="text-xs text-slate-400 mt-0.5">
-              Deterministic diagnosis → prediction → strategy → policy · Phase 2 (THINK)
+              {metrics?.intelligence?.ai_configured
+                ? "AI-assisted diagnosis → deterministic prediction → strategy → policy · Phase 2.5"
+                : "Deterministic diagnosis → prediction → strategy → policy · Phase 2.5 (THINK)"}
             </p>
           </div>
           <Link

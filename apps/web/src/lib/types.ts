@@ -88,6 +88,8 @@ export interface DiagnosisResult {
   rationale: string;
   evidence: string[];
   provider: string;
+  provider_version?: string | null;
+  fallback_reason?: string | null;
 }
 
 export interface FeatureContribution {
@@ -148,6 +150,9 @@ export interface IntelligenceEnvelope {
   intelligence_enabled: boolean;
   status: string;
   provider?: string | null;
+  provider_version?: string | null;
+  intelligence_version?: string | null;
+  diagnosis_source?: string | null;
   version?: string | null;
   analyzed_at?: string | null;
   diagnosis?: DiagnosisResult | null;
@@ -161,6 +166,9 @@ export interface IntelligenceEnvelope {
 export interface IntelligenceSummary {
   status: string;
   provider: string;
+  provider_version?: string | null;
+  intelligence_version?: string | null;
+  diagnosis_source?: string | null;
   version: string;
   failure_category?: string | null;
   recovery_probability?: number | null;
@@ -178,6 +186,9 @@ export interface IntelligenceMetrics {
   needs_approval: number;
   policy_rejected: number;
   policy_approved: number;
+  ai_enhanced: number;
+  deterministic: number;
+  ai_configured: boolean;
 }
 
 export interface IntelligenceListItem {
@@ -194,6 +205,8 @@ export interface IntelligenceListItem {
   risk_level?: string | null;
   status: string;
   provider: string;
+  provider_version?: string | null;
+  diagnosis_source?: string | null;
   version: string;
   analyzed_at?: string | null;
 }

@@ -137,7 +137,24 @@ class DiagnosisResult(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     rationale: str
     evidence: List[str] = []
-    provider: str = "DETERMINISTIC"
+    provider: str = "DETERMINISTIC"          # "DETERMINISTIC" | "GEMINI"
+    provider_version: Optional[str] = None   # e.g. "gemini-2.0-flash" / "deterministic-2.5"
+    fallback_reason: Optional[str] = None    # set when an AI attempt fell back to deterministic
+
+
+class AIDiagnosisSchema(BaseModel):
+    """
+    The STRICT shape requested from and validated for an LLM diagnosis response.
+    Deliberately minimal: an LLM can only return these fields — it has no field
+    through which to authorise an action or influence policy.
+    """
+    model_config = ConfigDict(extra="ignore")
+
+    failure_category: FailureCategory
+    probable_cause: str = Field(min_length=1, max_length=400)
+    confidence: float = Field(ge=0.0, le=1.0)
+    rationale: str = Field(min_length=1, max_length=800)
+    evidence: List[str] = Field(default_factory=list, max_length=12)
 
 
 # ---------------------------------------------------------------------------
@@ -223,7 +240,10 @@ class IntelligenceEnvelope(BaseModel):
     analyzed: bool
     intelligence_enabled: bool
     status: str
-    provider: Optional[str] = None
+    provider: Optional[str] = None            # "DETERMINISTIC" | "GEMINI"
+    provider_version: Optional[str] = None
+    intelligence_version: Optional[str] = None
+    diagnosis_source: Optional[str] = None    # "AI-ENHANCED" | "DETERMINISTIC FALLBACK" | "DETERMINISTIC"
     version: Optional[str] = None
     analyzed_at: Optional[datetime] = None
     diagnosis: Optional[Dict[str, Any]] = None
@@ -238,6 +258,9 @@ class IntelligenceSummary(BaseModel):
     """Compact intelligence view attached to recovery case responses."""
     status: str
     provider: str
+    provider_version: Optional[str] = None
+    intelligence_version: Optional[str] = None
+    diagnosis_source: Optional[str] = None
     version: str
     failure_category: Optional[str] = None
     recovery_probability: Optional[float] = None
@@ -263,6 +286,8 @@ class IntelligenceListItem(BaseModel):
     risk_level: Optional[str] = None
     status: str
     provider: str
+    provider_version: Optional[str] = None
+    diagnosis_source: Optional[str] = None
     version: str
     analyzed_at: Optional[datetime] = None
 
@@ -280,3 +305,6 @@ class IntelligenceMetrics(BaseModel):
     needs_approval: int = 0
     policy_rejected: int = 0
     policy_approved: int = 0
+    ai_enhanced: int = 0          # latest analyses whose diagnosis came from an LLM
+    deterministic: int = 0        # latest analyses using the deterministic engine
+    ai_configured: bool = False   # LLM_ENABLED + a provider selected (server-side)

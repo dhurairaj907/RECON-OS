@@ -37,12 +37,22 @@ def _latest_intelligence_map(db: Session, case_ids: list) -> dict:
     return latest
 
 
+def _diagnosis_source(ci: CaseIntelligence) -> str:
+    if (ci.provider or "").upper() == "GEMINI":
+        return "AI-ENHANCED"
+    fell_back = bool((ci.diagnosis_json or {}).get("fallback_reason"))
+    return "DETERMINISTIC FALLBACK" if fell_back else "DETERMINISTIC"
+
+
 def _summary(ci: CaseIntelligence | None) -> Optional[IntelligenceSummary]:
     if ci is None:
         return None
     return IntelligenceSummary(
         status=ci.status,
         provider=ci.provider,
+        provider_version=ci.provider_version,
+        intelligence_version=ci.intelligence_version,
+        diagnosis_source=_diagnosis_source(ci),
         version=str(ci.version),
         failure_category=ci.failure_category,
         recovery_probability=(

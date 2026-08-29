@@ -59,6 +59,14 @@ def _latest_intel(db: Session, case_id) -> CaseIntelligence | None:
     )
 
 
+def diagnosis_source(ci: CaseIntelligence) -> str:
+    """UI-facing label for where the diagnosis came from."""
+    if (ci.provider or "").upper() == "GEMINI":
+        return "AI-ENHANCED"
+    fell_back = bool((ci.diagnosis_json or {}).get("fallback_reason"))
+    return "DETERMINISTIC FALLBACK" if fell_back else "DETERMINISTIC"
+
+
 def _envelope(case: RecoveryCase, ci: CaseIntelligence | None) -> IntelligenceEnvelope:
     if ci is None:
         return IntelligenceEnvelope(
@@ -75,6 +83,9 @@ def _envelope(case: RecoveryCase, ci: CaseIntelligence | None) -> IntelligenceEn
         intelligence_enabled=settings.INTELLIGENCE_ENABLED,
         status=ci.status,
         provider=ci.provider,
+        provider_version=ci.provider_version,
+        intelligence_version=ci.intelligence_version,
+        diagnosis_source=diagnosis_source(ci),
         version=str(ci.version),
         analyzed_at=ci.created_at,
         diagnosis=ci.diagnosis_json,
@@ -172,6 +183,8 @@ def list_intelligence(
             risk_level=ci.risk_level,
             status=ci.status,
             provider=ci.provider,
+            provider_version=ci.provider_version,
+            diagnosis_source=diagnosis_source(ci),
             version=str(ci.version),
             analyzed_at=ci.created_at,
         ))

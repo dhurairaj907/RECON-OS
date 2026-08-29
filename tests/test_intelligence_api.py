@@ -162,12 +162,12 @@ def test_intelligence_failure_is_audited(db_session, sample_payment_failed_paylo
     case = _make_case(db_session, sample_payment_failed_payload)
 
     def boom(*a, **k):
-        raise RuntimeError("simulated diagnosis failure")
+        raise RuntimeError("simulated pipeline failure")
 
-    monkeypatch.setattr("services.intelligence.orchestrator.diagnose", boom)
+    monkeypatch.setattr("services.intelligence.orchestrator.build_case_context", boom)
     ci = run_intelligence(db_session, case.id, trigger="test")
     assert ci.status == "FAILED"
-    assert "simulated diagnosis failure" in (ci.error_message or "")
+    assert "simulated pipeline failure" in (ci.error_message or "")
 
     actions = {
         a.action for a in db_session.query(AuditLog)

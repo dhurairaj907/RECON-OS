@@ -47,7 +47,12 @@ class CaseIntelligence(Base):
 
     # Lifecycle: POLICY_APPROVED | NEEDS_APPROVAL | POLICY_REJECTED | FAILED
     status = Column(String(30), nullable=False, default="ANALYZED", index=True)
+    # Diagnosis source: "DETERMINISTIC" | "GEMINI"
     provider = Column(String(30), nullable=False, default="DETERMINISTIC")
+    # Model / engine version, e.g. "gemini-2.0-flash" or "deterministic-1.0"
+    provider_version = Column(String(60), nullable=True)
+    # Overall intelligence-pipeline version, e.g. "2.5"
+    intelligence_version = Column(String(20), nullable=True)
     version = Column(Integer, nullable=False, default=1)
 
     # Structured sections

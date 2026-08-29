@@ -52,7 +52,39 @@ def init_db():
     """
     import models  # noqa: F401 — triggers model registration
     Base.metadata.create_all(bind=engine)
+    _run_lightweight_migrations()
     logger.info("Database tables created / verified")
+
+
+def _run_lightweight_migrations():
+    """
+    Additive, idempotent column top-ups for tables that already exist in an older
+    dev database (there is no Alembic in this project). SQLite and PostgreSQL
+    both support `ALTER TABLE ... ADD COLUMN`. Never drops or rewrites data.
+    """
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    tables = set(insp.get_table_names())
+
+    wanted = {
+        "case_intelligence": {
+            "provider_version": "VARCHAR(60)",
+            "intelligence_version": "VARCHAR(20)",
+        },
+    }
+
+    for table, columns in wanted.items():
+        if table not in tables:
+            continue
+        existing = {c["name"] for c in insp.get_columns(table)}
+        missing = {name: ddl for name, ddl in columns.items() if name not in existing}
+        if not missing:
+            continue
+        with engine.begin() as conn:
+            for name, ddl in missing.items():
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
+        logger.info("Migrated %s: added columns %s", table, list(missing))
 
 
 def seed_default_merchant(db: Session):

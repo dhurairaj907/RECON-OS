@@ -88,9 +88,9 @@ export default function IntelligencePage() {
       <div className="bg-surface rounded-lg border border-border overflow-hidden">
         {isLoading ? (
           <div className="p-4 space-y-2">
-            <SkeletonRow cols={7} />
-            <SkeletonRow cols={7} />
-            <SkeletonRow cols={7} />
+            <SkeletonRow cols={10} />
+            <SkeletonRow cols={10} />
+            <SkeletonRow cols={10} />
           </div>
         ) : !data || data.items.length === 0 ? (
           <EmptyState
@@ -108,6 +108,7 @@ export default function IntelligencePage() {
                     <th className="py-3 px-4">Case #</th>
                     <th className="py-3 px-4">Customer</th>
                     <th className="py-3 px-4">Amount</th>
+                    <th className="py-3 px-4">Source</th>
                     <th className="py-3 px-4">Diagnosis</th>
                     <th className="py-3 px-4">Recovery P</th>
                     <th className="py-3 px-4">Strategy</th>
@@ -127,6 +128,19 @@ export default function IntelligencePage() {
                       <td className="py-3 px-4 text-slate-200">{it.customer_name || "Unknown"}</td>
                       <td className="py-3 px-4 font-mono font-semibold text-white tabular-nums">
                         {formatINR(it.amount_at_risk)}
+                      </td>
+                      <td className="py-3 px-4 font-mono text-[11px]">
+                        <span
+                          className={
+                            it.diagnosis_source === "AI-ENHANCED"
+                              ? "text-emerald-400"
+                              : it.diagnosis_source === "DETERMINISTIC FALLBACK"
+                              ? "text-amber-400"
+                              : "text-slate-500"
+                          }
+                        >
+                          {it.diagnosis_source || it.provider}
+                        </span>
                       </td>
                       <td className="py-3 px-4 font-mono text-slate-300">{it.failure_category || "—"}</td>
                       <td className="py-3 px-4 font-mono">

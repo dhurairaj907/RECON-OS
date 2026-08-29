@@ -14,11 +14,12 @@ Hard rules enforced by design:
     Those remain deterministic (Phase 2) / Phase 3.
 """
 
-from integrations.llm.provider import LLMProvider, StructuredLLMResult
+from integrations.llm.provider import LLMProvider, NullProvider, StructuredLLMResult
 from integrations.llm.client import get_llm_provider, llm_available
 
 __all__ = [
     "LLMProvider",
+    "NullProvider",
     "StructuredLLMResult",
     "get_llm_provider",
     "llm_available",

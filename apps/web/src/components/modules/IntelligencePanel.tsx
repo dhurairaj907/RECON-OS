@@ -12,6 +12,8 @@ import {
   AlertTriangle,
   Ban,
   ArrowRight,
+  Sparkles,
+  Cpu,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { IntelligenceEnvelope } from "@/lib/types";
@@ -67,6 +69,30 @@ const riskTone: Record<string, string> = {
   HIGH: "text-rose-400",
 };
 
+/** Backend-driven diagnosis source: "AI-ENHANCED" | "DETERMINISTIC FALLBACK" | "DETERMINISTIC" */
+function SourceBadge({ source }: { source?: string | null }) {
+  if (!source) return null;
+  const isAI = source === "AI-ENHANCED";
+  const isFallback = source === "DETERMINISTIC FALLBACK";
+  const Icon = isAI ? Sparkles : Cpu;
+  const tone = isAI
+    ? "text-emerald-400 border-status-success-border bg-status-success-bg"
+    : isFallback
+    ? "text-amber-400 border-status-warning-border bg-status-warning-bg"
+    : "text-slate-400 border-border bg-surface-elevated";
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 text-[10px] font-mono font-semibold px-2 py-0.5 rounded border tracking-wide",
+        tone
+      )}
+    >
+      <Icon className="w-3 h-3" />
+      {source}
+    </span>
+  );
+}
+
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
     <h4 className="text-[11px] font-mono font-semibold text-slate-300 uppercase tracking-widest">
@@ -107,15 +133,11 @@ export function IntelligencePanel({ caseId, caseNumber }: Props) {
             RECON INTELLIGENCE
           </h3>
           <p className="text-[10px] font-mono text-slate-500 tracking-wider">
-            PHASE 2 • THINK
+            PHASE 2.5 • THINK
           </p>
         </div>
       </div>
-      {data?.analyzed && data.provider && (
-        <span className="text-[10px] font-mono px-2 py-0.5 rounded border border-border text-slate-400">
-          {data.provider} v{data.version}
-        </span>
-      )}
+      {data?.analyzed && <SourceBadge source={data.diagnosis_source} />}
     </div>
   );
 
@@ -203,7 +225,21 @@ export function IntelligencePanel({ caseId, caseNumber }: Props) {
 
       {/* DIAGNOSIS */}
       <div className="space-y-3">
-        <SectionTitle>Diagnosis</SectionTitle>
+        <div className="flex items-center justify-between">
+          <SectionTitle>Diagnosis</SectionTitle>
+          <span className="inline-flex items-center gap-1 text-[10px] font-mono text-slate-500">
+            {env.diagnosis_source === "AI-ENHANCED" ? (
+              <><Sparkles className="w-3 h-3 text-emerald-400" /> Provider: {d.provider_version || env.provider}</>
+            ) : (
+              <><Cpu className="w-3 h-3" /> Provider: deterministic engine</>
+            )}
+          </span>
+        </div>
+        {d.fallback_reason && (
+          <div className="text-[11px] font-mono text-amber-400/90 bg-status-warning-bg border border-status-warning-border/50 rounded px-2 py-1.5">
+            AI diagnosis unavailable — deterministic fallback used ({d.fallback_reason}).
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-3">
           <div>
             <p className="text-[10px] font-mono text-slate-500 uppercase">Failure Category</p>
@@ -216,7 +252,10 @@ export function IntelligencePanel({ caseId, caseNumber }: Props) {
             <p className="text-xs text-slate-200 mt-0.5">{d.probable_cause}</p>
           </div>
         </div>
-        <ConfidenceRow label="Diagnosis confidence" value={d.confidence} />
+        <ConfidenceRow
+          label={env.diagnosis_source === "AI-ENHANCED" ? "AI diagnosis confidence" : "Diagnosis confidence"}
+          value={d.confidence}
+        />
         {d.evidence?.length > 0 && (
           <div>
             <p className="text-[10px] font-mono text-slate-500 uppercase mb-1">Evidence</p>
@@ -373,12 +412,19 @@ export function IntelligencePanel({ caseId, caseNumber }: Props) {
       </div>
 
       {/* SOURCE */}
-      <div className="border-t border-border/60 pt-3 flex items-center justify-between text-[10px] font-mono text-slate-500">
+      <div className="border-t border-border/60 pt-3 flex flex-wrap items-center justify-between gap-1 text-[10px] font-mono text-slate-500">
         <span>
-          INTELLIGENCE SOURCE: <span className="text-slate-300">{env.provider}</span> · v{env.version}
+          DIAGNOSIS SOURCE: <span className="text-slate-300">{env.diagnosis_source || env.provider}</span>
+          {env.provider_version ? ` · ${env.provider_version}` : ""}
+          {env.intelligence_version ? ` · pipeline v${env.intelligence_version}` : ""}
+          {" · analysis #"}{env.version}
         </span>
         <span>{env.analyzed_at ? formatDateTime(env.analyzed_at) : ""}</span>
       </div>
+      <p className="text-[10px] font-mono text-slate-600">
+        Prediction, strategy and the Policy Engine are deterministic and are not
+        influenced by the diagnosis source.
+      </p>
 
       <div>
         <button
