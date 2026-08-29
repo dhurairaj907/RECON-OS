@@ -1,0 +1,27 @@
+"""
+RECON OS — Routers Package
+"""
+
+from routers.webhooks import router as webhooks_router
+from routers.dashboard import router as dashboard_router
+from routers.events import router as events_router
+from routers.payments import router as payments_router
+from routers.customers import router as customers_router
+from routers.recovery_cases import router as recovery_cases_router
+from routers.audit_logs import router as audit_logs_router
+from routers.simulator import router as simulator_router
+from routers.health import router as health_router
+from routers.intelligence import router as intelligence_router
+
+__all__ = [
+    "webhooks_router",
+    "dashboard_router",
+    "events_router",
+    "payments_router",
+    "customers_router",
+    "recovery_cases_router",
+    "audit_logs_router",
+    "simulator_router",
+    "health_router",
+    "intelligence_router",
+]
