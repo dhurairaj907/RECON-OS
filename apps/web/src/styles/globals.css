@@ -2,18 +2,142 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * RECON OS — semantic theme tokens
+ * ---------------------------------
+ * All values are RGB triplets so Tailwind's `<alpha-value>` slash syntax works.
+ *   :root       → LIGHT theme (genuine professional light mode)
+ *   :root.dark  → DARK theme  (primary RECON identity — SSR default)
+ */
+
 @layer base {
   :root {
-    --background: 224 71% 4%;
-    --foreground: 213 31% 91%;
+    /* ---- LIGHT ---- */
+    --c-bg: 247 248 250;
+    --c-surface: 255 255 255;
+    --c-surface-subtle: 241 244 248;
+    --c-surface-hover: 235 239 245;
+    --c-surface-elevated: 255 255 255;
+
+    --c-border: 223 227 234;
+    --c-border-subtle: 233 236 241;
+    --c-border-highlight: 196 204 216;
+
+    --c-accent: 37 99 235;
+    --c-accent-hover: 29 78 216;
+    --c-accent-subtle: 219 234 254;
+
+    --c-fg: 15 23 42;
+    --c-fg-secondary: 51 65 85;
+    --c-fg-muted: 90 103 122;
+    --c-fg-faint: 113 122 140;
+    --c-fg-inverse: 255 255 255;
+
+    --c-success: 4 120 87;
+    --c-warning: 180 83 9;
+    --c-danger: 185 28 28;
+    --c-info: 29 78 216;
+    --c-neutral: 71 85 105;
+
+    --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.06), 0 1px 3px rgba(15, 23, 42, 0.04);
+    --shadow-elevated: 0 12px 32px -14px rgba(15, 23, 42, 0.18), 0 2px 8px -4px rgba(15, 23, 42, 0.08);
+    --shadow-depth-hover: 0 0 0 1px rgb(var(--c-accent) / 0.25), 0 14px 34px -16px rgba(15, 23, 42, 0.22);
+
+    --grid-line: rgba(15, 23, 42, 0.045);
+    --grid-line-far: rgba(15, 23, 42, 0.028);
+    --ambient-1: rgba(37, 99, 235, 0.06);
+    --ambient-2: rgba(15, 23, 42, 0.035);
+    --vignette: rgba(15, 23, 42, 0.05);
+
+    /* Film grain — architectural light room: barely there */
+    --grain-opacity: 0.022;
+    --grain-blend: multiply;
+
+    /* State-driven atmospheric glow (radial wash tints) */
+    --glow-info: rgba(37, 99, 235, 0.10);
+    --glow-success: rgba(4, 120, 87, 0.10);
+    --glow-warning: rgba(180, 83, 9, 0.10);
+    --glow-danger: rgba(185, 28, 28, 0.10);
+
+    --scrollbar-track: 241 244 248;
+    --scrollbar-thumb: 205 212 222;
+    --scrollbar-thumb-hover: 176 186 200;
+
+    color-scheme: light;
+  }
+
+  :root.dark {
+    /* ---- DARK (primary identity) ---- */
+    --c-bg: 11 14 20;
+    --c-surface: 18 23 34;
+    --c-surface-subtle: 22 29 43;
+    --c-surface-hover: 27 35 52;
+    --c-surface-elevated: 33 42 62;
+
+    --c-border: 30 38 56;
+    --c-border-subtle: 24 32 48;
+    --c-border-highlight: 44 56 82;
+
+    --c-accent: 37 99 235;
+    --c-accent-hover: 29 78 216;
+    --c-accent-subtle: 30 58 138;
+
+    --c-fg: 241 245 249;
+    --c-fg-secondary: 203 213 225;
+    --c-fg-muted: 148 163 184;
+    --c-fg-faint: 100 116 139;
+    --c-fg-inverse: 11 14 20;
+
+    --c-success: 52 211 153;
+    --c-warning: 251 191 36;
+    --c-danger: 251 113 133;
+    --c-info: 96 165 250;
+    --c-neutral: 148 163 184;
+
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-elevated: 0 16px 40px -18px rgba(0, 0, 0, 0.75), 0 2px 8px -4px rgba(0, 0, 0, 0.5);
+    --shadow-depth-hover: 0 0 0 1px rgb(var(--c-accent) / 0.35), 0 18px 40px -20px rgba(0, 0, 0, 0.8);
+
+    --grid-line: rgba(255, 255, 255, 0.025);
+    --grid-line-far: rgba(255, 255, 255, 0.014);
+    --ambient-1: rgba(37, 99, 235, 0.08);
+    --ambient-2: rgba(37, 99, 235, 0.04);
+    --vignette: rgba(0, 0, 0, 0.55);
+
+    /* Film grain — cinematic operations chamber: stronger */
+    --grain-opacity: 0.055;
+    --grain-blend: overlay;
+
+    /* State-driven atmospheric glow (radial wash tints) */
+    --glow-info: rgba(96, 165, 250, 0.14);
+    --glow-success: rgba(52, 211, 153, 0.13);
+    --glow-warning: rgba(251, 191, 36, 0.12);
+    --glow-danger: rgba(251, 113, 133, 0.13);
+
+    --scrollbar-track: 11 14 20;
+    --scrollbar-thumb: 30 38 56;
+    --scrollbar-thumb-hover: 44 56 82;
+
+    color-scheme: dark;
   }
 
   body {
-    background-color: #0B0E14;
-    color: #F1F5F9;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background-color: rgb(var(--c-bg));
+    color: rgb(var(--c-fg));
+    font-family: var(--font-sans), "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Theme transition — only colour props, only when the class actually flips */
+  html.theme-anim,
+  html.theme-anim * {
+    transition:
+      background-color 180ms ease,
+      border-color 180ms ease,
+      color 180ms ease,
+      fill 180ms ease,
+      box-shadow 180ms ease;
   }
 }
 
@@ -22,18 +146,15 @@
   width: 6px;
   height: 6px;
 }
-
 ::-webkit-scrollbar-track {
-  background: #0B0E14;
+  background: rgb(var(--scrollbar-track));
 }
-
 ::-webkit-scrollbar-thumb {
-  background: #1E2638;
+  background: rgb(var(--scrollbar-thumb));
   border-radius: 3px;
 }
-
 ::-webkit-scrollbar-thumb:hover {
-  background: #2C3852;
+  background: rgb(var(--scrollbar-thumb-hover));
 }
 
 /* Tabular figures for financial numbers */
@@ -41,15 +162,140 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Subtle glow for critical / active badges */
-.badge-glow-danger {
-  box-shadow: 0 0 10px rgba(239, 68, 68, 0.2);
+.text-balance {
+  text-wrap: balance;
 }
 
-.badge-glow-success {
-  box-shadow: 0 0 10px rgba(16, 185, 129, 0.2);
+/* Subtle glow for critical / active badges (dark only — noise in light) */
+:root.dark .badge-glow-danger {
+  box-shadow: 0 0 10px rgb(var(--c-danger) / 0.18);
+}
+:root.dark .badge-glow-success {
+  box-shadow: 0 0 10px rgb(var(--c-success) / 0.18);
+}
+:root.dark .badge-glow-info {
+  box-shadow: 0 0 10px rgb(var(--c-info) / 0.18);
 }
 
-.badge-glow-info {
-  box-shadow: 0 0 10px rgba(59, 130, 246, 0.2);
+/* ---- Depth system --------------------------------------------------- */
+@layer components {
+  .depth-card {
+    @apply bg-surface border border-border rounded-lg shadow-card transition-all duration-150 ease-spatial;
+  }
+  .depth-card-hover {
+    @apply hover:-translate-y-px hover:border-accent/30 hover:shadow-depth-hover;
+  }
+  /* 1px top highlight that reads as a raised plane */
+  .depth-highlight {
+    position: relative;
+  }
+  .depth-highlight::before {
+    content: "";
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 1px;
+    border-radius: inherit;
+    background: linear-gradient(
+      to right,
+      transparent,
+      rgb(var(--c-fg) / 0.06),
+      transparent
+    );
+    pointer-events: none;
+  }
+}
+
+/* ---- Cinematic surface treatments -------------------------------- */
+@layer components {
+  /* Static film grain — one fixed layer, mounted once via <GrainOverlay/>. */
+  .grain-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    opacity: var(--grain-opacity);
+    mix-blend-mode: var(--grain-blend);
+    background-image: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    background-size: 160px 160px;
+  }
+
+  /* State-tinted atmospheric wash — <AtmosphericGlow tone="..."/>. */
+  .atmo-glow {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    transition: background 600ms ease, opacity 600ms ease;
+  }
+  .atmo-glow[data-tone="idle"]    { background: radial-gradient(900px 520px at 78% -8%, transparent, transparent); opacity: 0; }
+  .atmo-glow[data-tone="info"]    { background: radial-gradient(1000px 560px at 82% -6%, var(--glow-info), transparent 62%); }
+  .atmo-glow[data-tone="success"] { background: radial-gradient(1000px 560px at 82% -6%, var(--glow-success), transparent 62%); }
+  .atmo-glow[data-tone="warning"] { background: radial-gradient(1000px 560px at 82% -6%, var(--glow-warning), transparent 62%); }
+  .atmo-glow[data-tone="danger"]  { background: radial-gradient(1000px 560px at 82% -6%, var(--glow-danger), transparent 62%); }
+
+  /* Oversized editorial display type — used sparingly for hero figures. */
+  .display-xl {
+    font-family: var(--font-sans), "Inter", sans-serif;
+    font-size: clamp(2.5rem, 6vw, 4.75rem);
+    line-height: 0.95;
+    letter-spacing: -0.03em;
+    font-weight: 700;
+    text-wrap: balance;
+  }
+  .display-lg {
+    font-family: var(--font-sans), "Inter", sans-serif;
+    font-size: clamp(1.75rem, 3.6vw, 2.75rem);
+    line-height: 1;
+    letter-spacing: -0.022em;
+    font-weight: 700;
+    text-wrap: balance;
+  }
+  .display-mono {
+    font-family: var(--font-mono), "JetBrains Mono", monospace;
+    letter-spacing: 0.08em;
+  }
+
+  /* Dark-mode-only state edge glow for live cards. */
+  :root.dark .glow-info    { box-shadow: var(--shadow-card), 0 0 0 1px rgb(var(--c-info) / 0.14), 0 8px 34px -18px rgb(var(--c-info) / 0.5); }
+  :root.dark .glow-success { box-shadow: var(--shadow-card), 0 0 0 1px rgb(var(--c-success) / 0.16), 0 8px 34px -18px rgb(var(--c-success) / 0.5); }
+  :root.dark .glow-warning { box-shadow: var(--shadow-card), 0 0 0 1px rgb(var(--c-warning) / 0.16), 0 8px 34px -18px rgb(var(--c-warning) / 0.45); }
+  :root.dark .glow-danger  { box-shadow: var(--shadow-card), 0 0 0 1px rgb(var(--c-danger) / 0.16), 0 8px 34px -18px rgb(var(--c-danger) / 0.5); }
+}
+
+/* ---- Spatial / 3D utilities --------------------------------------- */
+@layer utilities {
+  .perspective-none {
+    perspective: none;
+  }
+  .perspective-1200 {
+    perspective: 1200px;
+  }
+  .perspective-1600 {
+    perspective: 1600px;
+  }
+  .preserve-3d {
+    transform-style: preserve-3d;
+  }
+  .backface-hidden {
+    backface-visibility: hidden;
+  }
+  .gpu {
+    transform: translateZ(0);
+    will-change: transform;
+  }
+}
+
+/* ---- Reduced motion — kill all ambient / spatial motion ----------- */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  .motion-safe-only {
+    display: none !important;
+  }
 }

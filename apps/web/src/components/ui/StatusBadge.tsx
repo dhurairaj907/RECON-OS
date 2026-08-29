@@ -11,16 +11,16 @@ export function StatusBadge({ status, type = "default", className }: StatusBadge
   const normalized = status.toUpperCase();
 
   // Color mapping based on semantic meaning
-  let colorClasses = "bg-surface-elevated text-slate-300 border-border";
+  let colorClasses = "bg-surface-elevated text-fg-secondary border-border";
 
   if (["CAPTURED", "RESOLVED", "PROCESSED", "SUCCESS", "SUCCESSFUL"].includes(normalized)) {
-    colorClasses = "bg-status-success-bg text-emerald-400 border-status-success-border badge-glow-success";
+    colorClasses = "bg-status-success-bg text-status-success border-status-success-border badge-glow-success";
   } else if (["FAILED", "CRITICAL", "HIGH"].includes(normalized)) {
-    colorClasses = "bg-status-danger-bg text-rose-400 border-status-danger-border badge-glow-danger";
+    colorClasses = "bg-status-danger-bg text-status-danger border-status-danger-border badge-glow-danger";
   } else if (["DETECTED", "OPEN", "PROCESSING", "MEDIUM", "WARNING"].includes(normalized)) {
-    colorClasses = "bg-status-warning-bg text-amber-400 border-status-warning-border";
+    colorClasses = "bg-status-warning-bg text-status-warning border-status-warning-border";
   } else if (["AUTHORIZED", "LOW", "RECEIVED", "INFO", "PAYMENT.FAILED"].includes(normalized)) {
-    colorClasses = "bg-status-info-bg text-blue-400 border-status-info-border";
+    colorClasses = "bg-status-info-bg text-status-info border-status-info-border";
   }
 
   return (

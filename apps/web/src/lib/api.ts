@@ -13,6 +13,7 @@ import {
   RecoveryAction,
   ProposeActionResponse,
   ExecuteActionResponse,
+  ReconcileActionResponse,
 } from "./types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -132,6 +133,10 @@ export const api = {
     ),
   executeAction: (actionId: string) =>
     fetcher<ExecuteActionResponse>(`/api/v1/actions/${actionId}/execute`, {
+      method: "POST",
+    }),
+  reconcileAction: (actionId: string) =>
+    fetcher<ReconcileActionResponse>(`/api/v1/actions/${actionId}/reconcile`, {
       method: "POST",
     }),
   getAction: (actionId: string) =>

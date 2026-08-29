@@ -19,9 +19,24 @@ import {
   Link2,
   CheckCircle2,
 } from "lucide-react";
+import dynamic from "next/dynamic";
 import { api } from "@/lib/api";
 import { IntelligenceEnvelope, RecoveryAction } from "@/lib/types";
 import { cn, formatDateTime, formatINR } from "@/lib/utils";
+import { deriveCasePipeline } from "@/components/spatial/pipeline-model";
+
+const RecoveryPipeline3D = dynamic(
+  () =>
+    import("@/components/spatial/RecoveryPipeline3D").then(
+      (m) => m.RecoveryPipeline3D
+    ),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="h-40 rounded-lg border border-border bg-surface/60 animate-pulse" />
+    ),
+  }
+);
 
 interface Props {
   caseId: string;
@@ -46,31 +61,31 @@ function ConfidenceRow({ label, value }: { label: string; value: number }) {
   const pct = Math.round(value * 100);
   return (
     <div className="space-y-1">
-      <div className="flex items-center justify-between text-[11px] font-mono text-slate-400">
+      <div className="flex items-center justify-between text-[11px] font-mono text-fg-muted">
         <span>{label}</span>
-        <span className="text-slate-200 tabular-nums">{pct}%</span>
+        <span className="text-fg tabular-nums">{pct}%</span>
       </div>
-      <Meter value={value} tone="bg-blue-500/80" />
+      <Meter value={value} tone="bg-status-info/80" />
     </div>
   );
 }
 
 const bandTone: Record<string, string> = {
-  HIGH: "bg-emerald-500/80",
-  MEDIUM: "bg-amber-500/80",
-  LOW: "bg-rose-500/80",
+  HIGH: "bg-status-success/80",
+  MEDIUM: "bg-status-warning/80",
+  LOW: "bg-status-danger/80",
 };
 
 const verdictStyle: Record<string, { tone: string; icon: any; label: string }> = {
-  APPROVED: { tone: "text-emerald-400 border-status-success-border bg-status-success-bg", icon: ShieldCheck, label: "APPROVED" },
-  NEEDS_APPROVAL: { tone: "text-amber-400 border-status-warning-border bg-status-warning-bg", icon: AlertTriangle, label: "NEEDS APPROVAL" },
-  REJECTED: { tone: "text-rose-400 border-status-danger-border bg-status-danger-bg", icon: Ban, label: "REJECTED" },
+  APPROVED: { tone: "text-status-success border-status-success-border bg-status-success-bg", icon: ShieldCheck, label: "APPROVED" },
+  NEEDS_APPROVAL: { tone: "text-status-warning border-status-warning-border bg-status-warning-bg", icon: AlertTriangle, label: "NEEDS APPROVAL" },
+  REJECTED: { tone: "text-status-danger border-status-danger-border bg-status-danger-bg", icon: Ban, label: "REJECTED" },
 };
 
 const riskTone: Record<string, string> = {
-  LOW: "text-emerald-400",
-  MEDIUM: "text-amber-400",
-  HIGH: "text-rose-400",
+  LOW: "text-status-success",
+  MEDIUM: "text-status-warning",
+  HIGH: "text-status-danger",
 };
 
 /** Backend-driven diagnosis source: "AI-ENHANCED" | "DETERMINISTIC FALLBACK" | "DETERMINISTIC" */
@@ -80,10 +95,10 @@ function SourceBadge({ source }: { source?: string | null }) {
   const isFallback = source === "DETERMINISTIC FALLBACK";
   const Icon = isAI ? Sparkles : Cpu;
   const tone = isAI
-    ? "text-emerald-400 border-status-success-border bg-status-success-bg"
+    ? "text-status-success border-status-success-border bg-status-success-bg"
     : isFallback
-    ? "text-amber-400 border-status-warning-border bg-status-warning-bg"
-    : "text-slate-400 border-border bg-surface-elevated";
+    ? "text-status-warning border-status-warning-border bg-status-warning-bg"
+    : "text-fg-muted border-border bg-surface-elevated";
   return (
     <span
       className={cn(
@@ -99,7 +114,7 @@ function SourceBadge({ source }: { source?: string | null }) {
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
-    <h4 className="text-[11px] font-mono font-semibold text-slate-300 uppercase tracking-widest">
+    <h4 className="text-[11px] font-mono font-semibold text-fg-secondary uppercase tracking-widest">
       {children}
     </h4>
   );
@@ -110,15 +125,18 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 const ELIGIBLE_STRATEGIES = ["RETRY_NOW", "RETRY_DELAYED", "SEND_PAYMENT_LINK"];
 
 const actionStateStyle: Record<string, string> = {
-  RECOVERED: "text-emerald-400 border-status-success-border bg-status-success-bg",
-  WAITING_FOR_PAYMENT: "text-blue-400 border-status-info-border bg-status-info-bg",
-  EXECUTED: "text-blue-400 border-status-info-border bg-status-info-bg",
-  EXECUTING: "text-blue-400 border-status-info-border bg-status-info-bg",
-  APPROVED: "text-emerald-400 border-status-success-border bg-status-success-bg",
-  READY: "text-slate-300 border-border bg-surface-elevated",
-  BLOCKED: "text-rose-400 border-status-danger-border bg-status-danger-bg",
-  NEEDS_APPROVAL: "text-amber-400 border-status-warning-border bg-status-warning-bg",
-  FAILED: "text-rose-400 border-status-danger-border bg-status-danger-bg",
+  RECOVERED: "text-status-success border-status-success-border bg-status-success-bg",
+  WAITING_FOR_PAYMENT: "text-status-info border-status-info-border bg-status-info-bg",
+  EXECUTED: "text-status-info border-status-info-border bg-status-info-bg",
+  EXECUTING: "text-status-info border-status-info-border bg-status-info-bg",
+  APPROVED: "text-status-success border-status-success-border bg-status-success-bg",
+  READY: "text-fg-secondary border-border bg-surface-elevated",
+  BLOCKED: "text-status-danger border-status-danger-border bg-status-danger-bg",
+  NEEDS_APPROVAL: "text-status-warning border-status-warning-border bg-status-warning-bg",
+  PARTIAL: "text-status-warning border-status-warning-border bg-status-warning-bg",
+  EXPIRED: "text-status-danger border-status-danger-border bg-status-danger-bg",
+  CANCELLED: "text-status-danger border-status-danger-border bg-status-danger-bg",
+  FAILED: "text-status-danger border-status-danger-border bg-status-danger-bg",
 };
 
 function ActionSection({ env, caseId }: { env: IntelligenceEnvelope; caseId: string }) {
@@ -129,6 +147,7 @@ function ActionSection({ env, caseId }: { env: IntelligenceEnvelope; caseId: str
   );
   const [busy, setBusy] = useState<null | string>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [reconcileMsg, setReconcileMsg] = useState<string | null>(null);
 
   const action: RecoveryAction | undefined = actionsData?.items?.[0];
 
@@ -162,6 +181,14 @@ function ActionSection({ env, caseId }: { env: IntelligenceEnvelope; caseId: str
       if (action) await api.executeAction(action.id);
     }, "retry");
 
+  const confirmPayment = () =>
+    run(async () => {
+      if (!action) return;
+      setReconcileMsg(null);
+      const res = await api.reconcileAction(action.id);
+      setReconcileMsg(res.message);
+    }, "confirm");
+
   const simulatePaid = () =>
     run(async () => {
       if (action) await api.simulatePaymentLinkPaid(action.id);
@@ -173,8 +200,8 @@ function ActionSection({ env, caseId }: { env: IntelligenceEnvelope; caseId: str
     <div className="space-y-3 border-t border-border/60 pt-4">
       <div className="flex items-center justify-between">
         <SectionTitle>Action</SectionTitle>
-        <span className="inline-flex items-center gap-1 text-[10px] font-mono text-slate-500">
-          <Zap className="w-3 h-3 text-amber-400" /> RAZORPAY TEST MODE
+        <span className="inline-flex items-center gap-1 text-[10px] font-mono text-fg-faint">
+          <Zap className="w-3 h-3 text-status-warning" /> RAZORPAY TEST MODE
         </span>
       </div>
 
@@ -182,42 +209,42 @@ function ActionSection({ env, caseId }: { env: IntelligenceEnvelope; caseId: str
       {!action && (
         <>
           {!eligible ? (
-            <p className="text-[11px] text-slate-500 font-mono">
+            <p className="text-[11px] text-fg-faint font-mono">
               No automated recovery action available for strategy{" "}
-              <span className="text-slate-300">{strategyAction || "—"}</span>.
+              <span className="text-fg-secondary">{strategyAction || "—"}</span>.
               Phase 3 executes CREATE_PAYMENT_LINK only.
             </p>
           ) : verdict === "NEEDS_APPROVAL" ? (
             <div className="rounded border border-status-warning-border/50 bg-status-warning-bg px-3 py-2">
-              <p className="text-[11px] font-mono text-amber-400 font-semibold">
+              <p className="text-[11px] font-mono text-status-warning font-semibold">
                 ACTION REQUIRES APPROVAL
               </p>
-              <p className="text-[11px] text-slate-400 mt-0.5">
+              <p className="text-[11px] text-fg-muted mt-0.5">
                 {env.policy?.reason} — execution is blocked until a human approves.
               </p>
             </div>
           ) : verdict === "REJECTED" ? (
-            <p className="text-[11px] text-rose-400 font-mono">
+            <p className="text-[11px] text-status-danger font-mono">
               Policy REJECTED — no recovery action will be executed.
             </p>
           ) : (
             <>
               <div className="rounded-lg border border-border bg-surface-subtle p-3 space-y-2">
                 <div className="flex items-center justify-between">
-                  <span className="text-sm font-mono font-semibold text-blue-400">
+                  <span className="text-sm font-mono font-semibold text-status-info">
                     CREATE PAYMENT LINK
                   </span>
-                  <span className="inline-flex items-center gap-1 text-[10px] font-mono text-emerald-400">
+                  <span className="inline-flex items-center gap-1 text-[10px] font-mono text-status-success">
                     <Check className="w-3 h-3" /> POLICY APPROVED
                   </span>
                 </div>
                 <div className="flex items-center justify-between text-[11px] font-mono">
-                  <span className="text-slate-500">Amount</span>
-                  <span className="text-white font-semibold tabular-nums">
+                  <span className="text-fg-faint">Amount</span>
+                  <span className="text-fg font-semibold tabular-nums">
                     {formatINR(amount)}
                   </span>
                 </div>
-                <p className="text-[10px] text-slate-600 font-mono leading-relaxed">
+                <p className="text-[10px] text-fg-faint font-mono leading-relaxed">
                   A failed Razorpay payment cannot be re-charged via API. The
                   executable recovery action is a Test Mode Payment Link the
                   customer pays on. Policy is re-checked server-side before any
@@ -251,21 +278,45 @@ function ActionSection({ env, caseId }: { env: IntelligenceEnvelope; caseId: str
               )}
             >
               {uiState === "RECOVERED" ? <CheckCircle2 className="w-3.5 h-3.5" /> :
-               uiState === "BLOCKED" || uiState === "FAILED" ? <Ban className="w-3.5 h-3.5" /> :
-               uiState === "NEEDS_APPROVAL" ? <AlertTriangle className="w-3.5 h-3.5" /> :
+               ["BLOCKED", "FAILED", "EXPIRED", "CANCELLED"].includes(uiState) ? <Ban className="w-3.5 h-3.5" /> :
+               ["NEEDS_APPROVAL", "PARTIAL"].includes(uiState) ? <AlertTriangle className="w-3.5 h-3.5" /> :
                <Activity className="w-3.5 h-3.5" />}
               {uiState.replace(/_/g, " ")}
             </span>
-            <span className="text-[10px] font-mono text-slate-500">{action.action_type}</span>
+            <div className="flex items-center gap-2">
+              {action.simulated && (
+                <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-status-warning-bg border border-status-warning-border text-status-warning tracking-wider">
+                  SIMULATED
+                </span>
+              )}
+              <span className="text-[10px] font-mono text-fg-faint">{action.action_type}</span>
+            </div>
           </div>
+
+          {uiState === "RECOVERED" && action.simulated && (
+            <p className="text-[11px] font-mono text-status-warning/90 bg-status-warning-bg border border-status-warning-border/50 rounded px-2 py-1.5">
+              This recovery was produced by the SIMULATOR — no real payment was made.
+              It is excluded from real &ldquo;Revenue Recovered&rdquo; metrics.
+            </p>
+          )}
+
+          {uiState === "PARTIAL" && (
+            <div className="rounded border border-status-warning-border/50 bg-status-warning-bg px-3 py-2">
+              <p className="text-[11px] font-mono text-status-warning font-semibold">PARTIAL PAYMENT</p>
+              <p className="text-[11px] text-fg-muted mt-0.5">
+                Less than the expected amount was paid — the recovery case is NOT resolved and
+                no revenue is counted as recovered.
+              </p>
+            </div>
+          )}
 
           {(uiState === "BLOCKED" || uiState === "NEEDS_APPROVAL" || uiState === "FAILED") && (
             <div className="rounded border border-status-danger-border/40 bg-status-danger-bg/40 px-3 py-2">
-              <p className="text-[11px] font-mono text-rose-300">
+              <p className="text-[11px] font-mono text-status-danger">
                 {action.blocked_reason || action.error_code || "Execution did not complete"}
               </p>
               {action.error_message && (
-                <p className="text-[11px] text-slate-400 mt-0.5">{action.error_message}</p>
+                <p className="text-[11px] text-fg-muted mt-0.5">{action.error_message}</p>
               )}
             </div>
           )}
@@ -273,7 +324,7 @@ function ActionSection({ env, caseId }: { env: IntelligenceEnvelope; caseId: str
           {action.payment_link_url && (
             <div className="rounded-lg border border-border bg-surface-subtle p-3 space-y-2 text-[11px] font-mono">
               <div className="flex items-center justify-between">
-                <span className="text-slate-500">Payment Link</span>
+                <span className="text-fg-faint">Payment Link</span>
                 <a
                   href={action.payment_link_url}
                   target="_blank"
@@ -284,17 +335,17 @@ function ActionSection({ env, caseId }: { env: IntelligenceEnvelope; caseId: str
                 </a>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-slate-500">Reference ID</span>
-                <span className="text-slate-300">{action.reference_id}</span>
+                <span className="text-fg-faint">Reference ID</span>
+                <span className="text-fg-secondary">{action.reference_id}</span>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-slate-500">Amount</span>
-                <span className="text-white tabular-nums">{formatINR(action.amount)}</span>
+                <span className="text-fg-faint">Amount</span>
+                <span className="text-fg tabular-nums">{formatINR(action.amount)}</span>
               </div>
               {uiState === "RECOVERED" && (
                 <div className="flex items-center justify-between border-t border-border/60 pt-2">
-                  <span className="text-slate-500">Recovered</span>
-                  <span className="text-emerald-400 font-semibold tabular-nums">
+                  <span className="text-fg-faint">Recovered</span>
+                  <span className="text-status-success font-semibold tabular-nums">
                     {formatINR(action.recovered_amount)}
                   </span>
                 </div>
@@ -302,40 +353,61 @@ function ActionSection({ env, caseId }: { env: IntelligenceEnvelope; caseId: str
             </div>
           )}
 
-          {uiState === "WAITING_FOR_PAYMENT" && (
-            <p className="text-[10px] font-mono text-slate-600">
-              Revenue is <span className="text-slate-400">NOT</span> counted as recovered
-              until a <span className="text-slate-400">payment_link.paid</span> webhook confirms payment.
+          {(uiState === "WAITING_FOR_PAYMENT" || uiState === "PARTIAL") && (
+            <p className="text-[10px] font-mono text-fg-faint leading-relaxed">
+              Complete the test payment on the Razorpay link, then click{" "}
+              <span className="text-fg-muted">Confirm payment</span> — RECON checks the real
+              Razorpay status and only marks <span className="text-fg-muted">RECOVERED</span>{" "}
+              if Razorpay reports the link as paid in full. Revenue is not counted until then.
+            </p>
+          )}
+
+          {reconcileMsg && (
+            <p className="text-[11px] font-mono text-status-info bg-status-info-bg border border-status-info-border/50 rounded px-2 py-1.5">
+              {reconcileMsg}
             </p>
           )}
 
           <div className="flex flex-wrap items-center gap-2">
+            {(uiState === "WAITING_FOR_PAYMENT" || uiState === "PARTIAL") && (
+              <button
+                onClick={confirmPayment}
+                disabled={busy !== null}
+                className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg bg-accent text-white text-xs font-mono font-medium hover:bg-accent-hover transition-colors disabled:opacity-50"
+              >
+                {busy === "confirm" ? (
+                  <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Checking Razorpay…</>
+                ) : (
+                  <><CheckCircle2 className="w-3.5 h-3.5" /> Confirm payment</>
+                )}
+              </button>
+            )}
             {(uiState === "BLOCKED" || uiState === "FAILED") && (
               <button
                 onClick={retry}
                 disabled={busy !== null}
-                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border bg-surface-subtle text-[11px] font-mono text-slate-300 hover:text-white hover:bg-surface-elevated transition-colors disabled:opacity-50"
+                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border bg-surface-subtle text-[11px] font-mono text-fg-secondary hover:text-fg hover:bg-surface-elevated transition-colors disabled:opacity-50"
               >
                 {busy === "retry" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Activity className="w-3 h-3" />}
                 Re-run execution
               </button>
             )}
-            {uiState === "WAITING_FOR_PAYMENT" && (
+            {uiState === "WAITING_FOR_PAYMENT" && action.simulator_enabled && (
               <button
                 onClick={simulatePaid}
                 disabled={busy !== null}
-                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border bg-surface-subtle text-[11px] font-mono text-slate-400 hover:text-white hover:bg-surface-elevated transition-colors disabled:opacity-50"
-                title="Demo: simulate the payment_link.paid webhook"
+                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-status-warning-border/60 bg-status-warning-bg text-[11px] font-mono text-status-warning hover:bg-status-warning-bg/70 transition-colors disabled:opacity-50"
+                title="SIMULATOR ONLY — fabricates a payment_link.paid event. Not a real payment."
               >
                 {busy === "simulate" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
-                Simulate test payment
+                Simulate (test only)
               </button>
             )}
           </div>
         </div>
       )}
 
-      {err && <p className="text-[11px] text-rose-400 font-mono">{err}</p>}
+      {err && <p className="text-[11px] text-status-danger font-mono">{err}</p>}
     </div>
   );
 }
@@ -347,8 +419,23 @@ export function IntelligencePanel({ caseId, caseNumber }: Props) {
     caseId ? `/api/v1/recovery-cases/${caseId}/intelligence` : null,
     () => api.getCaseIntelligence(caseId)
   );
+  // Shared SWR key with ActionSection — SWR dedupes, so this is one request.
+  const { data: actionsData } = useSWR(
+    caseId ? `/api/v1/recovery-cases/${caseId}/actions` : null,
+    () => api.getCaseActions(caseId),
+    { refreshInterval: 4000 }
+  );
+  const pipelineAction: RecoveryAction | undefined = actionsData?.items?.[0];
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
+
+  const pipeline = data ? (
+    <RecoveryPipeline3D
+      stages={deriveCasePipeline(data, pipelineAction)}
+      title={`CASE PIPELINE${caseNumber ? ` · ${caseNumber}` : ""}`}
+      caption="Each stage reflects real backend state. Nothing shows as recovered unless Razorpay (or a clearly-labelled simulation) confirms it."
+    />
+  ) : null;
 
   const analyze = async () => {
     setRunning(true);
@@ -368,10 +455,10 @@ export function IntelligencePanel({ caseId, caseNumber }: Props) {
       <div className="flex items-center gap-2">
         <BrainCircuit className="w-4 h-4 text-accent" />
         <div>
-          <h3 className="text-sm font-semibold text-white font-mono tracking-wide">
+          <h3 className="text-sm font-semibold text-fg font-mono tracking-wide">
             RECON INTELLIGENCE
           </h3>
-          <p className="text-[10px] font-mono text-slate-500 tracking-wider">
+          <p className="text-[10px] font-mono text-fg-faint tracking-wider">
             PHASE 2.5 • THINK
           </p>
         </div>
@@ -385,7 +472,7 @@ export function IntelligencePanel({ caseId, caseNumber }: Props) {
     return (
       <div className="rounded-lg border border-border bg-surface-subtle/40 p-5 space-y-4">
         {header}
-        <div className="flex items-center gap-2 text-xs text-slate-400 font-mono">
+        <div className="flex items-center gap-2 text-xs text-fg-muted font-mono">
           <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading intelligence…
         </div>
       </div>
@@ -396,7 +483,7 @@ export function IntelligencePanel({ caseId, caseNumber }: Props) {
     return (
       <div className="rounded-lg border border-border bg-surface-subtle/40 p-5 space-y-4">
         {header}
-        <p className="text-xs text-rose-400 font-mono">
+        <p className="text-xs text-status-danger font-mono">
           Could not load intelligence for this case.
         </p>
       </div>
@@ -410,19 +497,20 @@ export function IntelligencePanel({ caseId, caseNumber }: Props) {
     return (
       <div className="rounded-lg border border-border bg-surface-subtle/40 p-5 space-y-4">
         {header}
+        {pipeline}
         {env.status === "FAILED" ? (
           <div className="space-y-2">
-            <p className="text-xs text-rose-400 font-mono">INTELLIGENCE RUN FAILED</p>
+            <p className="text-xs text-status-danger font-mono">INTELLIGENCE RUN FAILED</p>
             {env.error_message && (
-              <p className="text-[11px] text-slate-500 font-mono break-words">
+              <p className="text-[11px] text-fg-faint font-mono break-words">
                 {env.error_message}
               </p>
             )}
           </div>
         ) : (
           <div className="space-y-1.5">
-            <p className="text-xs font-mono text-slate-300">INTELLIGENCE NOT RUN</p>
-            <p className="text-[11px] text-slate-500">
+            <p className="text-xs font-mono text-fg-secondary">INTELLIGENCE NOT RUN</p>
+            <p className="text-[11px] text-fg-faint">
               {env.intelligence_enabled
                 ? "This case has not been analysed yet."
                 : "Automatic analysis is disabled — run it manually below."}
@@ -430,7 +518,7 @@ export function IntelligencePanel({ caseId, caseNumber }: Props) {
           </div>
         )}
         {runError && (
-          <p className="text-[11px] text-rose-400 font-mono">{runError}</p>
+          <p className="text-[11px] text-status-danger font-mono">{runError}</p>
         )}
         <button
           onClick={analyze}
@@ -461,34 +549,35 @@ export function IntelligencePanel({ caseId, caseNumber }: Props) {
   return (
     <div className="rounded-lg border border-border bg-surface-subtle/40 p-5 space-y-6">
       {header}
+      {pipeline}
 
       {/* DIAGNOSIS */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <SectionTitle>Diagnosis</SectionTitle>
-          <span className="inline-flex items-center gap-1 text-[10px] font-mono text-slate-500">
+          <span className="inline-flex items-center gap-1 text-[10px] font-mono text-fg-faint">
             {env.diagnosis_source === "AI-ENHANCED" ? (
-              <><Sparkles className="w-3 h-3 text-emerald-400" /> Provider: {d.provider_version || env.provider}</>
+              <><Sparkles className="w-3 h-3 text-status-success" /> Provider: {d.provider_version || env.provider}</>
             ) : (
               <><Cpu className="w-3 h-3" /> Provider: deterministic engine</>
             )}
           </span>
         </div>
         {d.fallback_reason && (
-          <div className="text-[11px] font-mono text-amber-400/90 bg-status-warning-bg border border-status-warning-border/50 rounded px-2 py-1.5">
+          <div className="text-[11px] font-mono text-status-warning/90 bg-status-warning-bg border border-status-warning-border/50 rounded px-2 py-1.5">
             AI diagnosis unavailable — deterministic fallback used ({d.fallback_reason}).
           </div>
         )}
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <p className="text-[10px] font-mono text-slate-500 uppercase">Failure Category</p>
-            <p className="text-sm font-mono font-semibold text-white mt-0.5">
+            <p className="text-[10px] font-mono text-fg-faint uppercase">Failure Category</p>
+            <p className="text-sm font-mono font-semibold text-fg mt-0.5">
               {d.failure_category}
             </p>
           </div>
           <div>
-            <p className="text-[10px] font-mono text-slate-500 uppercase">Probable Cause</p>
-            <p className="text-xs text-slate-200 mt-0.5">{d.probable_cause}</p>
+            <p className="text-[10px] font-mono text-fg-faint uppercase">Probable Cause</p>
+            <p className="text-xs text-fg mt-0.5">{d.probable_cause}</p>
           </div>
         </div>
         <ConfidenceRow
@@ -497,11 +586,11 @@ export function IntelligencePanel({ caseId, caseNumber }: Props) {
         />
         {d.evidence?.length > 0 && (
           <div>
-            <p className="text-[10px] font-mono text-slate-500 uppercase mb-1">Evidence</p>
+            <p className="text-[10px] font-mono text-fg-faint uppercase mb-1">Evidence</p>
             <ul className="space-y-0.5">
               {d.evidence.slice(0, 6).map((e, i) => (
-                <li key={i} className="text-[11px] text-slate-400 font-mono flex gap-1.5">
-                  <span className="text-slate-600">–</span>
+                <li key={i} className="text-[11px] text-fg-muted font-mono flex gap-1.5">
+                  <span className="text-fg-faint">–</span>
                   <span className="break-words">{e}</span>
                 </li>
               ))}
@@ -515,31 +604,31 @@ export function IntelligencePanel({ caseId, caseNumber }: Props) {
         <SectionTitle>Recovery Prediction</SectionTitle>
         <div className="flex items-end justify-between">
           <div>
-            <p className="text-[10px] font-mono text-slate-500 uppercase">Recovery Probability</p>
-            <p className="text-3xl font-bold font-mono text-white tabular-nums mt-0.5">
+            <p className="text-[10px] font-mono text-fg-faint uppercase">Recovery Probability</p>
+            <p className="text-3xl font-bold font-mono text-fg tabular-nums mt-0.5">
               {Math.round(p.recovery_probability * 100)}%
             </p>
           </div>
           <span
             className={cn(
               "text-[11px] font-mono font-semibold px-2 py-1 rounded border",
-              p.band === "HIGH" && "text-emerald-400 border-status-success-border bg-status-success-bg",
-              p.band === "MEDIUM" && "text-amber-400 border-status-warning-border bg-status-warning-bg",
-              p.band === "LOW" && "text-rose-400 border-status-danger-border bg-status-danger-bg"
+              p.band === "HIGH" && "text-status-success border-status-success-border bg-status-success-bg",
+              p.band === "MEDIUM" && "text-status-warning border-status-warning-border bg-status-warning-bg",
+              p.band === "LOW" && "text-status-danger border-status-danger-border bg-status-danger-bg"
             )}
           >
             {p.band} BAND
           </span>
         </div>
-        <Meter value={p.recovery_probability} tone={bandTone[p.band] || "bg-blue-500/80"} />
-        <div className="flex items-center justify-between text-[10px] font-mono text-slate-500">
+        <Meter value={p.recovery_probability} tone={bandTone[p.band] || "bg-status-info/80"} />
+        <div className="flex items-center justify-between text-[10px] font-mono text-fg-faint">
           <span>base rate {Math.round(p.base_rate * 100)}%</span>
           <span>model confidence {Math.round(p.confidence * 100)}%</span>
         </div>
 
         {p.features_used?.length > 0 && (
           <div className="space-y-1 pt-1">
-            <p className="text-[10px] font-mono text-slate-500 uppercase mb-1">Contributing Factors</p>
+            <p className="text-[10px] font-mono text-fg-faint uppercase mb-1">Contributing Factors</p>
             {p.features_used
               .filter((f) => f.feature !== "failure_category_base_rate")
               .map((f, i) => {
@@ -550,16 +639,16 @@ export function IntelligencePanel({ caseId, caseNumber }: Props) {
                     key={i}
                     className="flex items-center justify-between text-[11px] font-mono"
                   >
-                    <span className="text-slate-400">
+                    <span className="text-fg-muted">
                       {f.feature.replace(/_/g, " ")}
-                      <span className="text-slate-600"> · {f.value}</span>
+                      <span className="text-fg-faint"> · {f.value}</span>
                     </span>
                     <span
                       className={cn(
                         "tabular-nums",
-                        f.direction === "positive" && "text-emerald-400",
-                        f.direction === "negative" && "text-rose-400",
-                        f.direction === "neutral" && "text-slate-500"
+                        f.direction === "positive" && "text-status-success",
+                        f.direction === "negative" && "text-status-danger",
+                        f.direction === "neutral" && "text-fg-faint"
                       )}
                     >
                       {sign}
@@ -576,31 +665,31 @@ export function IntelligencePanel({ caseId, caseNumber }: Props) {
       <div className="space-y-3 border-t border-border/60 pt-4">
         <SectionTitle>Recommended Strategy</SectionTitle>
         <div className="flex items-center justify-between">
-          <span className="text-sm font-mono font-semibold text-blue-400">{s.action}</span>
-          <span className="text-[10px] font-mono text-slate-500">
+          <span className="text-sm font-mono font-semibold text-status-info">{s.action}</span>
+          <span className="text-[10px] font-mono text-fg-faint">
             confidence {Math.round(s.confidence * 100)}%
           </span>
         </div>
-        <p className="text-[11px] text-slate-400 leading-relaxed">{s.rationale}</p>
+        <p className="text-[11px] text-fg-muted leading-relaxed">{s.rationale}</p>
         {s.params && Object.keys(s.params).length > 0 && (
-          <div className="text-[10px] font-mono text-slate-500">
+          <div className="text-[10px] font-mono text-fg-faint">
             params: {JSON.stringify(s.params)}
           </div>
         )}
         {s.alternatives?.length > 0 && (
           <div className="space-y-1">
-            <p className="text-[10px] font-mono text-slate-500 uppercase">Alternatives</p>
+            <p className="text-[10px] font-mono text-fg-faint uppercase">Alternatives</p>
             {s.alternatives.map((a, i) => (
-              <div key={i} className="flex items-start gap-1.5 text-[11px] font-mono text-slate-400">
-                <ArrowRight className="w-3 h-3 mt-0.5 text-slate-600 shrink-0" />
+              <div key={i} className="flex items-start gap-1.5 text-[11px] font-mono text-fg-muted">
+                <ArrowRight className="w-3 h-3 mt-0.5 text-fg-faint shrink-0" />
                 <span>
-                  <span className="text-slate-300">{a.action}</span> — {a.reason}
+                  <span className="text-fg-secondary">{a.action}</span> — {a.reason}
                 </span>
               </div>
             ))}
           </div>
         )}
-        <p className="text-[10px] text-slate-600 font-mono">
+        <p className="text-[10px] text-fg-faint font-mono">
           Recommendation only — gated by the Policy Engine and Action Executor below.
         </p>
       </div>
@@ -622,29 +711,29 @@ export function IntelligencePanel({ caseId, caseNumber }: Props) {
             Risk <span className={cn("font-semibold", riskTone[pol.risk_level])}>{pol.risk_level}</span>
           </span>
         </div>
-        <p className="text-[11px] text-slate-400 leading-relaxed">{pol.reason}</p>
+        <p className="text-[11px] text-fg-muted leading-relaxed">{pol.reason}</p>
 
         <div className="space-y-1.5">
-          <p className="text-[10px] font-mono text-slate-500 uppercase">Rules Evaluated</p>
+          <p className="text-[10px] font-mono text-fg-faint uppercase">Rules Evaluated</p>
           {pol.evaluated_rules.map((r) => (
             <div key={r.rule_id} className="flex items-start gap-2 text-[11px] font-mono">
               {r.passed ? (
-                <Check className="w-3.5 h-3.5 text-emerald-400 mt-0.5 shrink-0" />
+                <Check className="w-3.5 h-3.5 text-status-success mt-0.5 shrink-0" />
               ) : (
-                <X className="w-3.5 h-3.5 text-rose-400 mt-0.5 shrink-0" />
+                <X className="w-3.5 h-3.5 text-status-danger mt-0.5 shrink-0" />
               )}
               <span className="flex-1">
-                <span className={cn(r.passed ? "text-slate-300" : "text-rose-300")}>
+                <span className={cn(r.passed ? "text-fg-secondary" : "text-status-danger")}>
                   {r.name}
                 </span>
-                <span className="text-slate-600 block">{r.detail}</span>
+                <span className="text-fg-faint block">{r.detail}</span>
               </span>
             </div>
           ))}
         </div>
 
         {pol.allowed_actions?.length > 0 && (
-          <p className="text-[10px] font-mono text-emerald-400/80">
+          <p className="text-[10px] font-mono text-status-success/80">
             allowed for automated execution: {pol.allowed_actions.join(", ")}
           </p>
         )}
@@ -654,16 +743,16 @@ export function IntelligencePanel({ caseId, caseNumber }: Props) {
       <ActionSection env={env} caseId={caseId} />
 
       {/* SOURCE */}
-      <div className="border-t border-border/60 pt-3 flex flex-wrap items-center justify-between gap-1 text-[10px] font-mono text-slate-500">
+      <div className="border-t border-border/60 pt-3 flex flex-wrap items-center justify-between gap-1 text-[10px] font-mono text-fg-faint">
         <span>
-          DIAGNOSIS SOURCE: <span className="text-slate-300">{env.diagnosis_source || env.provider}</span>
+          DIAGNOSIS SOURCE: <span className="text-fg-secondary">{env.diagnosis_source || env.provider}</span>
           {env.provider_version ? ` · ${env.provider_version}` : ""}
           {env.intelligence_version ? ` · pipeline v${env.intelligence_version}` : ""}
           {" · analysis #"}{env.version}
         </span>
         <span>{env.analyzed_at ? formatDateTime(env.analyzed_at) : ""}</span>
       </div>
-      <p className="text-[10px] font-mono text-slate-600">
+      <p className="text-[10px] font-mono text-fg-faint">
         Prediction, strategy and the Policy Engine are deterministic and are not
         influenced by the diagnosis source.
       </p>
@@ -672,7 +761,7 @@ export function IntelligencePanel({ caseId, caseNumber }: Props) {
         <button
           onClick={analyze}
           disabled={running || isValidating}
-          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border bg-surface-subtle text-[11px] font-mono text-slate-300 hover:text-white hover:bg-surface-elevated transition-colors disabled:opacity-50"
+          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border bg-surface-subtle text-[11px] font-mono text-fg-secondary hover:text-fg hover:bg-surface-elevated transition-colors disabled:opacity-50"
         >
           {running ? (
             <>
@@ -684,7 +773,7 @@ export function IntelligencePanel({ caseId, caseNumber }: Props) {
             </>
           )}
         </button>
-        {runError && <p className="text-[11px] text-rose-400 font-mono mt-2">{runError}</p>}
+        {runError && <p className="text-[11px] text-status-danger font-mono mt-2">{runError}</p>}
       </div>
     </div>
   );

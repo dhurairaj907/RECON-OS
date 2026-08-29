@@ -209,6 +209,7 @@ export interface ActionProposal {
   not_proposable_reason?: string | null;
   test_mode: boolean;
   razorpay_configured: boolean;
+  simulator_enabled: boolean;
 }
 
 export type ActionUiState =
@@ -218,6 +219,7 @@ export type ActionUiState =
   | "EXECUTED"
   | "WAITING_FOR_PAYMENT"
   | "RECOVERED"
+  | "PARTIAL"
   | "FAILED"
   | "BLOCKED"
   | "NEEDS_APPROVAL"
@@ -241,6 +243,8 @@ export interface RecoveryAction {
   amount?: string | null;
   currency: string;
   recovered_amount: string;
+  simulated?: boolean;
+  simulator_enabled?: boolean;
   strategy_action?: string | null;
   policy_verdict?: string | null;
   blocked_reason?: string | null;
@@ -265,16 +269,29 @@ export interface ExecuteActionResponse {
   action: RecoveryAction;
 }
 
+export interface ReconcileActionResponse {
+  ok: boolean;
+  recovered: boolean;
+  partial: boolean;
+  razorpay_status?: string | null;
+  amount_paid?: string | null;
+  message: string;
+  action: RecoveryAction;
+}
+
 export interface ActionMetrics {
   actions_proposed: number;
   actions_executed: number;
   actions_blocked: number;
   payment_links_created: number;
   pending_recoveries: number;
+  partial_recoveries: number;
   revenue_recovered: string;
+  simulated_revenue_recovered: string;
   recovery_rate: number;
   test_mode: boolean;
   razorpay_configured: boolean;
+  simulator_enabled: boolean;
 }
 
 export interface IntelligenceListItem {

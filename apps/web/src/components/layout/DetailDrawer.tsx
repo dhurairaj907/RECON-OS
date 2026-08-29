@@ -52,14 +52,14 @@ export function DetailDrawer({
     <div className="fixed inset-0 z-50 flex justify-end">
       {/* Backdrop */}
       <div
-        className="fixed inset-0 bg-black/60 backdrop-blur-sm transition-opacity duration-300 animate-in fade-in"
+        className="fixed inset-0 bg-black/60 backdrop-blur-sm animate-fade-in"
         onClick={onClose}
       />
 
       {/* Drawer Panel */}
       <div
         className={cn(
-          "relative z-10 w-full h-full bg-surface border-l border-border shadow-2xl flex flex-col overflow-hidden animate-in slide-in-from-right duration-300",
+          "relative z-10 w-full h-full bg-surface border-l border-border shadow-elevated flex flex-col overflow-hidden animate-slide-in-right depth-highlight",
           width
         )}
       >
@@ -68,17 +68,17 @@ export function DetailDrawer({
           <div className="flex items-center space-x-3">
             <div>
               <div className="flex items-center space-x-2">
-                <h2 className="text-base font-semibold text-white tracking-wide font-mono">
+                <h2 className="text-base font-semibold text-fg tracking-wide font-mono">
                   {title}
                 </h2>
                 {badge}
               </div>
-              {subtitle && <p className="text-xs text-slate-400 mt-0.5">{subtitle}</p>}
+              {subtitle && <p className="text-xs text-fg-muted mt-0.5">{subtitle}</p>}
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-md hover:bg-surface-elevated text-slate-400 hover:text-white transition-colors"
+            className="p-1.5 rounded-md hover:bg-surface-elevated text-fg-muted hover:text-fg transition-colors"
             title="Close Drawer (Esc)"
           >
             <X className="w-5 h-5" />

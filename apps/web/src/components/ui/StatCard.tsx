@@ -1,6 +1,7 @@
 import React from "react";
 import { cn, formatINR } from "@/lib/utils";
 import { LucideIcon } from "lucide-react";
+import { DepthCard } from "@/components/spatial/DepthCard";
 
 interface StatCardProps {
   title: string;
@@ -26,7 +27,7 @@ export function StatCard({
   const formattedValue = isCurrency ? formatINR(value) : value.toLocaleString();
 
   const variantBorders = {
-    default: "border-border hover:border-border-highlight",
+    default: "hover:border-border-highlight",
     danger: "border-status-danger-border/40 hover:border-status-danger-border",
     success: "border-status-success-border/40 hover:border-status-success-border",
     warning: "border-status-warning-border/40 hover:border-status-warning-border",
@@ -34,23 +35,24 @@ export function StatCard({
   };
 
   const iconColors = {
-    default: "text-slate-400 bg-surface-subtle",
-    danger: "text-rose-400 bg-status-danger-bg",
-    success: "text-emerald-400 bg-status-success-bg",
-    warning: "text-amber-400 bg-status-warning-bg",
-    info: "text-blue-400 bg-status-info-bg",
+    default: "text-fg-muted bg-surface-subtle",
+    danger: "text-status-danger bg-status-danger-bg",
+    success: "text-status-success bg-status-success-bg",
+    warning: "text-status-warning bg-status-warning-bg",
+    info: "text-status-info bg-status-info-bg",
   };
 
   return (
-    <div
+    <DepthCard
+      highlight
       className={cn(
-        "bg-surface p-5 rounded-lg border transition-all duration-200 shadow-sm flex flex-col justify-between",
+        "p-5 flex flex-col justify-between hover:-translate-y-px",
         variantBorders[variant],
         className
       )}
     >
       <div className="flex items-center justify-between">
-        <span className="text-xs font-mono uppercase tracking-wider text-slate-400 font-medium">
+        <span className="text-xs font-mono uppercase tracking-wider text-fg-muted font-medium">
           {title}
         </span>
         {Icon && (
@@ -61,16 +63,16 @@ export function StatCard({
       </div>
 
       <div className="mt-4">
-        <div className="text-2xl lg:text-3xl font-bold tracking-tight text-white tabular-nums">
+        <div className="text-2xl lg:text-3xl font-bold tracking-tight text-fg tabular-nums">
           {formattedValue}
         </div>
         {(subtitle || trend) && (
-          <div className="mt-2 flex items-center justify-between text-xs text-slate-400">
+          <div className="mt-2 flex items-center justify-between text-xs text-fg-muted">
             {subtitle && <span>{subtitle}</span>}
-            {trend && <span className="font-mono text-slate-500">{trend}</span>}
+            {trend && <span className="font-mono text-fg-faint">{trend}</span>}
           </div>
         )}
       </div>
-    </div>
+    </DepthCard>
   );
 }

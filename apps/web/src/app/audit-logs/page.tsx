@@ -42,27 +42,27 @@ export default function AuditLogsPage() {
         <div>
           <div className="flex items-center space-x-2">
             <ScrollText className="w-4 h-4 text-purple-400" />
-            <span className="text-xs font-mono tracking-wider text-slate-400 uppercase">
+            <span className="text-xs font-mono tracking-wider text-fg-muted uppercase">
               System Transparency
             </span>
           </div>
-          <h1 className="text-2xl font-bold tracking-tight text-white font-mono mt-1">
+          <h1 className="text-2xl font-bold tracking-tight text-fg font-mono mt-1">
             AUDIT TRAIL
           </h1>
-          <p className="text-xs text-slate-400 mt-1">
+          <p className="text-xs text-fg-muted mt-1">
             Immutable log of all system decisions, state transitions, duplicate rejections, and actions.
           </p>
         </div>
 
-        <div className="text-xs font-mono text-slate-400 bg-surface px-3 py-1.5 rounded-lg border border-border">
-          Total Logs: <span className="text-white font-bold">{data?.total || 0}</span>
+        <div className="text-xs font-mono text-fg-muted bg-surface px-3 py-1.5 rounded-lg border border-border">
+          Total Logs: <span className="text-fg font-bold">{data?.total || 0}</span>
         </div>
       </div>
 
       {/* Filter & Search Bar */}
       <div className="bg-surface p-4 rounded-lg border border-border flex flex-col md:flex-row items-center justify-between gap-3">
         <div className="relative flex-1 w-full">
-          <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-500" />
+          <Search className="w-4 h-4 absolute left-3 top-2.5 text-fg-faint" />
           <input
             type="text"
             placeholder="Search within audit log descriptions..."
@@ -71,7 +71,7 @@ export default function AuditLogsPage() {
               setSearchQuery(e.target.value);
               setPage(1);
             }}
-            className="w-full bg-surface-subtle border border-border rounded-lg pl-9 pr-4 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-accent"
+            className="w-full bg-surface-subtle border border-border rounded-lg pl-9 pr-4 py-1.5 text-xs text-fg placeholder-fg-faint focus:outline-none focus:border-accent"
           />
         </div>
 
@@ -83,7 +83,7 @@ export default function AuditLogsPage() {
               setActionFilter(e.target.value);
               setPage(1);
             }}
-            className="bg-surface-subtle border border-border rounded-lg px-3 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-accent font-mono"
+            className="bg-surface-subtle border border-border rounded-lg px-3 py-1.5 text-xs text-fg-secondary focus:outline-none focus:border-accent font-mono"
           >
             <option value="">All Actions</option>
             <option value="EVENT_PROCESSED">EVENT_PROCESSED</option>
@@ -99,7 +99,7 @@ export default function AuditLogsPage() {
               setActorFilter(e.target.value);
               setPage(1);
             }}
-            className="bg-surface-subtle border border-border rounded-lg px-3 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-accent font-mono"
+            className="bg-surface-subtle border border-border rounded-lg px-3 py-1.5 text-xs text-fg-secondary focus:outline-none focus:border-accent font-mono"
           >
             <option value="">All Actors</option>
             <option value="RAZORPAY">RAZORPAY</option>
@@ -128,7 +128,7 @@ export default function AuditLogsPage() {
           <>
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs">
-                <thead className="bg-surface-elevated/50 text-slate-400 font-mono text-[11px] uppercase border-b border-border">
+                <thead className="bg-surface-elevated/50 text-fg-muted font-mono text-[11px] uppercase border-b border-border">
                   <tr>
                     <th className="py-3 px-4">Actor</th>
                     <th className="py-3 px-4">Action</th>
@@ -143,18 +143,18 @@ export default function AuditLogsPage() {
                       onClick={() => setSelectedAudit(log)}
                       className="hover:bg-surface-elevated/40 cursor-pointer transition-colors"
                     >
-                      <td className="py-3 px-4 font-mono font-medium text-slate-300">
-                        <span className="px-2 py-0.5 rounded bg-surface-elevated text-blue-300 border border-border">
+                      <td className="py-3 px-4 font-mono font-medium text-fg-secondary">
+                        <span className="px-2 py-0.5 rounded bg-surface-elevated text-status-info border border-border">
                           {log.actor}
                         </span>
                       </td>
-                      <td className="py-3 px-4 font-mono font-medium text-amber-400">
+                      <td className="py-3 px-4 font-mono font-medium text-status-warning">
                         {log.action}
                       </td>
-                      <td className="py-3 px-4 text-slate-200 truncate max-w-md">
+                      <td className="py-3 px-4 text-fg truncate max-w-md">
                         {log.detail}
                       </td>
-                      <td className="py-3 px-4 text-right font-mono text-slate-400">
+                      <td className="py-3 px-4 text-right font-mono text-fg-muted">
                         {formatDateTime(log.created_at)}
                       </td>
                     </tr>
@@ -164,23 +164,23 @@ export default function AuditLogsPage() {
             </div>
 
             {/* Pagination */}
-            <div className="flex items-center justify-between px-4 py-3 border-t border-border bg-surface-subtle text-xs font-mono text-slate-400">
+            <div className="flex items-center justify-between px-4 py-3 border-t border-border bg-surface-subtle text-xs font-mono text-fg-muted">
               <div>
-                Page <span className="text-white font-medium">{page}</span> of{" "}
-                <span className="text-white font-medium">{totalPages || 1}</span>
+                Page <span className="text-fg font-medium">{page}</span> of{" "}
+                <span className="text-fg font-medium">{totalPages || 1}</span>
               </div>
               <div className="flex items-center space-x-2">
                 <button
                   disabled={page <= 1}
                   onClick={() => setPage((p) => Math.max(1, p - 1))}
-                  className="p-1 rounded bg-surface border border-border disabled:opacity-40 hover:bg-surface-elevated text-slate-300"
+                  className="p-1 rounded bg-surface border border-border disabled:opacity-40 hover:bg-surface-elevated text-fg-secondary"
                 >
                   <ChevronLeft className="w-4 h-4" />
                 </button>
                 <button
                   disabled={page >= totalPages}
                   onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                  className="p-1 rounded bg-surface border border-border disabled:opacity-40 hover:bg-surface-elevated text-slate-300"
+                  className="p-1 rounded bg-surface border border-border disabled:opacity-40 hover:bg-surface-elevated text-fg-secondary"
                 >
                   <ChevronRight className="w-4 h-4" />
                 </button>
@@ -201,27 +201,27 @@ export default function AuditLogsPage() {
           <div className="space-y-6 text-xs font-mono">
             <div className="p-4 rounded-lg bg-surface-subtle border border-border space-y-2">
               <div className="flex justify-between">
-                <span className="text-slate-400">Actor:</span>
-                <span className="text-white font-bold">{selectedAudit.actor}</span>
+                <span className="text-fg-muted">Actor:</span>
+                <span className="text-fg font-bold">{selectedAudit.actor}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-400">Action:</span>
-                <span className="text-amber-400">{selectedAudit.action}</span>
+                <span className="text-fg-muted">Action:</span>
+                <span className="text-status-warning">{selectedAudit.action}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-400">Log ID:</span>
-                <span className="text-slate-400">{selectedAudit.id}</span>
+                <span className="text-fg-muted">Log ID:</span>
+                <span className="text-fg-muted">{selectedAudit.id}</span>
               </div>
             </div>
 
             <div className="p-4 rounded-lg bg-surface-subtle border border-border space-y-1">
-              <span className="text-slate-400 uppercase text-[10px]">Detail Description:</span>
-              <p className="text-slate-200 text-sm font-sans leading-relaxed">{selectedAudit.detail}</p>
+              <span className="text-fg-muted uppercase text-[10px]">Detail Description:</span>
+              <p className="text-fg text-sm font-sans leading-relaxed">{selectedAudit.detail}</p>
             </div>
 
             {selectedAudit.metadata_json && (
               <div className="space-y-2">
-                <h3 className="text-slate-300 uppercase tracking-wider text-[11px]">Structured Metadata</h3>
+                <h3 className="text-fg-secondary uppercase tracking-wider text-[11px]">Structured Metadata</h3>
                 <JsonViewer data={selectedAudit.metadata_json} title="AUDIT METADATA" maxHeight="300px" />
               </div>
             )}

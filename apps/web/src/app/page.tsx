@@ -1,16 +1,15 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import useSWR from "swr";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import {
   ShieldAlert,
   CheckCircle2,
   TrendingDown,
   Activity,
-  Layers,
   ArrowUpRight,
-  ExternalLink,
   ChevronRight,
 } from "lucide-react";
 import { AppShell } from "@/components/layout/AppShell";
@@ -21,9 +20,24 @@ import { JsonViewer } from "@/components/ui/JsonViewer";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonCards } from "@/components/ui/SkeletonLoader";
 import { RevenueChart } from "@/components/modules/RevenueChart";
+import { Reveal } from "@/components/spatial/Reveal";
+import { deriveSystemPipeline } from "@/components/spatial/pipeline-model";
 import { api } from "@/lib/api";
 import { DashboardMetrics, RecoveryCase, RevenueEvent } from "@/lib/types";
 import { formatINR, formatDateTime, formatRelativeTime } from "@/lib/utils";
+
+const RecoveryPipeline3D = dynamic(
+  () =>
+    import("@/components/spatial/RecoveryPipeline3D").then(
+      (m) => m.RecoveryPipeline3D
+    ),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="h-40 rounded-lg border border-border bg-surface/60 animate-pulse" />
+    ),
+  }
+);
 
 export default function CommandCenterPage() {
   const { data: metrics, error, mutate, isValidating } = useSWR<DashboardMetrics>(
@@ -43,15 +57,15 @@ export default function CommandCenterPage() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-border pb-6">
         <div>
           <div className="flex items-center space-x-2">
-            <span className="h-2 w-2 rounded-full bg-blue-500 animate-pulse"></span>
-            <span className="text-xs font-mono tracking-wider text-slate-400 uppercase">
+            <span className="h-2 w-2 rounded-full bg-status-info animate-pulse"></span>
+            <span className="text-xs font-mono tracking-wider text-fg-muted uppercase">
               Financial Control System
             </span>
           </div>
-          <h1 className="text-2xl font-bold tracking-tight text-white font-mono mt-1">
+          <h1 className="text-2xl font-bold tracking-tight text-fg font-mono mt-1">
             REVENUE COMMAND CENTER
           </h1>
-          <p className="text-xs text-slate-400 mt-1">
+          <p className="text-xs text-fg-muted mt-1">
             Real-time detection, observation, and lifecycle monitoring for Razorpay payment infrastructure.
           </p>
         </div>
@@ -105,25 +119,36 @@ export default function CommandCenterPage() {
         </div>
       )}
 
+      {/* Operational recovery flow — real aggregate counts only */}
+      {!isLoading && (
+        <Reveal>
+          <RecoveryPipeline3D
+            stages={deriveSystemPipeline(metrics)}
+            title="OPERATIONAL RECOVERY FLOW"
+            caption="Live pipeline state across every case — counts are real backend metrics, not projections."
+          />
+        </Reveal>
+      )}
+
       {/* Phase 2 — THINK: Intelligence decision metrics (real data only) */}
-      <div className="bg-surface rounded-lg border border-border p-5">
+      <Reveal className="bg-surface rounded-lg border border-border p-5 shadow-card depth-highlight block">
         <div className="flex items-center justify-between mb-4">
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-sm font-semibold text-white tracking-wide font-mono">
+              <h2 className="text-sm font-semibold text-fg tracking-wide font-mono">
                 RECON INTELLIGENCE
               </h2>
               <span
                 className={`text-[10px] font-mono font-semibold px-2 py-0.5 rounded border tracking-wide ${
                   metrics?.intelligence?.ai_configured
-                    ? "text-emerald-400 border-status-success-border bg-status-success-bg"
-                    : "text-slate-400 border-border bg-surface-elevated"
+                    ? "text-status-success border-status-success-border bg-status-success-bg"
+                    : "text-fg-muted border-border bg-surface-elevated"
                 }`}
               >
                 {metrics?.intelligence?.ai_configured ? "AI-ENHANCED ANALYSIS" : "DETERMINISTIC ANALYSIS"}
               </span>
             </div>
-            <p className="text-xs text-slate-400 mt-0.5">
+            <p className="text-xs text-fg-muted mt-0.5">
               {metrics?.intelligence?.ai_configured
                 ? "AI-assisted diagnosis → deterministic prediction → strategy → policy · Phase 2.5"
                 : "Deterministic diagnosis → prediction → strategy → policy · Phase 2.5 (THINK)"}
@@ -137,23 +162,23 @@ export default function CommandCenterPage() {
           </Link>
         </div>
         {!metrics?.intelligence ? (
-          <p className="text-xs text-slate-500 font-mono py-3">
+          <p className="text-xs text-fg-faint font-mono py-3">
             No intelligence decisions yet. Open a recovery case and run{" "}
-            <span className="text-slate-300">Analyze Case</span>.
+            <span className="text-fg-secondary">Analyze Case</span>.
           </p>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             {[
-              { label: "Cases Analyzed", value: metrics.intelligence.cases_analyzed, tone: "text-white" },
-              { label: "High Recovery Probability", value: metrics.intelligence.high_recovery_probability, tone: "text-emerald-400" },
-              { label: "Needs Approval", value: metrics.intelligence.needs_approval, tone: "text-amber-400" },
-              { label: "Policy Rejected", value: metrics.intelligence.policy_rejected, tone: "text-rose-400" },
+              { label: "Cases Analyzed", value: metrics.intelligence.cases_analyzed, tone: "text-fg" },
+              { label: "High Recovery Probability", value: metrics.intelligence.high_recovery_probability, tone: "text-status-success" },
+              { label: "Needs Approval", value: metrics.intelligence.needs_approval, tone: "text-status-warning" },
+              { label: "Policy Rejected", value: metrics.intelligence.policy_rejected, tone: "text-status-danger" },
             ].map((m) => (
               <div key={m.label} className="rounded-lg border border-border bg-surface-subtle p-4">
                 <div className={`text-2xl font-bold font-mono tabular-nums ${m.tone}`}>
                   {m.value}
                 </div>
-                <div className="text-[11px] font-mono text-slate-400 mt-1 uppercase tracking-wider">
+                <div className="text-[11px] font-mono text-fg-muted mt-1 uppercase tracking-wider">
                   {m.label}
                 </div>
               </div>
@@ -165,53 +190,66 @@ export default function CommandCenterPage() {
         <div className="mt-4 border-t border-border pt-4">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
-              <h3 className="text-xs font-semibold text-white tracking-wide font-mono uppercase">
+              <h3 className="text-xs font-semibold text-fg tracking-wide font-mono uppercase">
                 Recovery Actions
               </h3>
-              <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded border border-status-warning-border/50 bg-status-warning-bg text-amber-400 tracking-wide">
+              <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded border border-status-warning-border/50 bg-status-warning-bg text-status-warning tracking-wide">
                 RAZORPAY {metrics?.actions?.test_mode === false ? "LIVE" : "TEST MODE"}
               </span>
+              {metrics?.actions?.simulator_enabled && (
+                <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded border border-status-warning-border/50 bg-status-warning-bg text-status-warning tracking-wide">
+                  SIMULATOR ON
+                </span>
+              )}
             </div>
           </div>
           {!metrics?.actions ? (
-            <p className="text-xs text-slate-500 font-mono py-2">
+            <p className="text-xs text-fg-faint font-mono py-2">
               No recovery actions yet. Open a policy-approved case and{" "}
-              <span className="text-slate-300">Create Payment Link</span>.
+              <span className="text-fg-secondary">Create Payment Link</span>.
             </p>
           ) : (
+            <>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
               {[
-                { label: "Actions Executed", value: metrics.actions.actions_executed, tone: "text-white", currency: false },
-                { label: "Pending Recoveries", value: metrics.actions.pending_recoveries, tone: "text-blue-400", currency: false },
-                { label: "Revenue Recovered", value: formatINR(metrics.actions.revenue_recovered), tone: "text-emerald-400", currency: true },
-                { label: "Recovery Rate", value: `${Math.round((metrics.actions.recovery_rate || 0) * 100)}%`, tone: "text-slate-200", currency: true },
+                { label: "Actions Executed", value: metrics.actions.actions_executed, tone: "text-fg", currency: false },
+                { label: "Pending Recoveries", value: metrics.actions.pending_recoveries, tone: "text-status-info", currency: false },
+                { label: "Revenue Recovered", value: formatINR(metrics.actions.revenue_recovered), tone: "text-status-success", currency: true },
+                { label: "Recovery Rate", value: `${Math.round((metrics.actions.recovery_rate || 0) * 100)}%`, tone: "text-fg", currency: true },
               ].map((m) => (
                 <div key={m.label} className="rounded-lg border border-border bg-surface-subtle p-4">
                   <div className={`text-2xl font-bold font-mono tabular-nums ${m.tone}`}>
                     {m.value}
                   </div>
-                  <div className="text-[11px] font-mono text-slate-400 mt-1 uppercase tracking-wider">
+                  <div className="text-[11px] font-mono text-fg-muted mt-1 uppercase tracking-wider">
                     {m.label}
                   </div>
                 </div>
               ))}
             </div>
+            {Number(metrics.actions.simulated_revenue_recovered) > 0 && (
+              <p className="text-[10px] font-mono text-status-warning/80 mt-2">
+                + {formatINR(metrics.actions.simulated_revenue_recovered)} simulated (excluded from Revenue Recovered)
+                {metrics.actions.partial_recoveries > 0 && ` · ${metrics.actions.partial_recoveries} partial`}
+              </p>
+            )}
+            </>
           )}
         </div>
-      </div>
+      </Reveal>
 
       {/* Main Grid: Revenue Dynamics + Live Activity Feed */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <Reveal as="div" className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left 2 Cols: Revenue Chart + Active Cases Snapshot */}
         <div className="lg:col-span-2 space-y-6">
           {/* Revenue Chart Panel */}
           <div className="bg-surface p-6 rounded-lg border border-border">
             <div className="flex items-center justify-between mb-4">
               <div>
-                <h2 className="text-sm font-semibold text-white tracking-wide font-mono">
+                <h2 className="text-sm font-semibold text-fg tracking-wide font-mono">
                   REVENUE DYNAMICS
                 </h2>
-                <p className="text-xs text-slate-400 mt-0.5">
+                <p className="text-xs text-fg-muted mt-0.5">
                   Comparison of failed revenue at risk vs captured revenue
                 </p>
               </div>
@@ -223,10 +261,10 @@ export default function CommandCenterPage() {
           <div className="bg-surface rounded-lg border border-border overflow-hidden">
             <div className="flex items-center justify-between p-5 border-b border-border bg-surface-subtle">
               <div>
-                <h2 className="text-sm font-semibold text-white tracking-wide font-mono">
+                <h2 className="text-sm font-semibold text-fg tracking-wide font-mono">
                   ACTIVE RECOVERY CASES
                 </h2>
-                <p className="text-xs text-slate-400 mt-0.5">
+                <p className="text-xs text-fg-muted mt-0.5">
                   High-priority payment failures requiring tracking
                 </p>
               </div>
@@ -248,7 +286,7 @@ export default function CommandCenterPage() {
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs">
-                  <thead className="bg-surface-elevated/50 text-slate-400 font-mono text-[11px] uppercase border-b border-border">
+                  <thead className="bg-surface-elevated/50 text-fg-muted font-mono text-[11px] uppercase border-b border-border">
                     <tr>
                       <th className="py-3 px-4">Case Number</th>
                       <th className="py-3 px-4">Customer</th>
@@ -265,13 +303,13 @@ export default function CommandCenterPage() {
                         onClick={() => setSelectedCase(c)}
                         className="hover:bg-surface-elevated/40 cursor-pointer transition-colors"
                       >
-                        <td className="py-3 px-4 font-mono font-medium text-blue-400">
+                        <td className="py-3 px-4 font-mono font-medium text-status-info">
                           {c.case_number}
                         </td>
-                        <td className="py-3 px-4 text-slate-200">
+                        <td className="py-3 px-4 text-fg">
                           {c.customer?.name || c.customer?.email || "Unknown"}
                         </td>
-                        <td className="py-3 px-4 font-mono font-semibold text-white tabular-nums">
+                        <td className="py-3 px-4 font-mono font-semibold text-fg tabular-nums">
                           {formatINR(c.amount_at_risk)}
                         </td>
                         <td className="py-3 px-4">
@@ -280,7 +318,7 @@ export default function CommandCenterPage() {
                         <td className="py-3 px-4">
                           <StatusBadge status={c.status} type="case" />
                         </td>
-                        <td className="py-3 px-4 text-right font-mono text-slate-400">
+                        <td className="py-3 px-4 text-right font-mono text-fg-muted">
                           {formatRelativeTime(c.opened_at)}
                         </td>
                       </tr>
@@ -296,8 +334,8 @@ export default function CommandCenterPage() {
         <div className="bg-surface rounded-lg border border-border flex flex-col h-full overflow-hidden">
           <div className="flex items-center justify-between p-5 border-b border-border bg-surface-subtle">
             <div className="flex items-center space-x-2">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
-              <h2 className="text-sm font-semibold text-white tracking-wide font-mono">
+              <span className="w-2 h-2 rounded-full bg-status-success animate-ping"></span>
+              <h2 className="text-sm font-semibold text-fg tracking-wide font-mono">
                 LIVE ACTIVITY FEED
               </h2>
             </div>
@@ -326,21 +364,21 @@ export default function CommandCenterPage() {
                 >
                   <div className="flex items-center justify-between">
                     <StatusBadge status={evt.event_type} type="event" />
-                    <span className="text-[11px] font-mono text-slate-400">
+                    <span className="text-[11px] font-mono text-fg-muted">
                       {formatRelativeTime(evt.received_at)}
                     </span>
                   </div>
 
                   <div className="flex items-center justify-between text-xs pt-1">
-                    <span className="font-mono text-slate-300 truncate max-w-[160px]">
+                    <span className="font-mono text-fg-secondary truncate max-w-[160px]">
                       {evt.normalized_data?.customer_name || evt.normalized_data?.customer_email || "Customer"}
                     </span>
-                    <span className="font-mono font-semibold text-white tabular-nums">
+                    <span className="font-mono font-semibold text-fg tabular-nums">
                       {formatINR(evt.normalized_data?.amount || "0")}
                     </span>
                   </div>
 
-                  <div className="text-[10px] font-mono text-slate-500 truncate">
+                  <div className="text-[10px] font-mono text-fg-faint truncate">
                     ID: {evt.razorpay_event_id}
                   </div>
                 </div>
@@ -348,7 +386,7 @@ export default function CommandCenterPage() {
             )}
           </div>
         </div>
-      </div>
+      </Reveal>
 
       {/* Recovery Case Detail Drawer */}
       <DetailDrawer
@@ -363,14 +401,14 @@ export default function CommandCenterPage() {
             {/* Financial Overview Card */}
             <div className="grid grid-cols-2 gap-4 p-4 rounded-lg bg-surface-subtle border border-border">
               <div>
-                <span className="text-slate-400 font-mono">Amount at Risk</span>
-                <div className="text-xl font-bold font-mono text-rose-400 mt-1">
+                <span className="text-fg-muted font-mono">Amount at Risk</span>
+                <div className="text-xl font-bold font-mono text-status-danger mt-1">
                   {formatINR(selectedCase.amount_at_risk)}
                 </div>
               </div>
               <div>
-                <span className="text-slate-400 font-mono">Amount Recovered</span>
-                <div className="text-xl font-bold font-mono text-emerald-400 mt-1">
+                <span className="text-fg-muted font-mono">Amount Recovered</span>
+                <div className="text-xl font-bold font-mono text-status-success mt-1">
                   {formatINR(selectedCase.amount_recovered)}
                 </div>
               </div>
@@ -378,25 +416,25 @@ export default function CommandCenterPage() {
 
             {/* Diagnostic Details */}
             <div className="space-y-3">
-              <h3 className="text-xs font-mono font-semibold text-slate-300 uppercase tracking-wider">
+              <h3 className="text-xs font-mono font-semibold text-fg-secondary uppercase tracking-wider">
                 Failure Information (Deterministic Phase 1)
               </h3>
               <div className="p-3.5 rounded-lg bg-surface-subtle border border-border space-y-2">
                 <div className="flex justify-between">
-                  <span className="text-slate-400">Failure Reason:</span>
-                  <span className="text-white font-medium">{selectedCase.failure_reason || "N/A"}</span>
+                  <span className="text-fg-muted">Failure Reason:</span>
+                  <span className="text-fg font-medium">{selectedCase.failure_reason || "N/A"}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-slate-400">Error Code:</span>
-                  <span className="font-mono text-amber-400">{selectedCase.failure_code || "N/A"}</span>
+                  <span className="text-fg-muted">Error Code:</span>
+                  <span className="font-mono text-status-warning">{selectedCase.failure_code || "N/A"}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-slate-400">Priority Level:</span>
+                  <span className="text-fg-muted">Priority Level:</span>
                   <StatusBadge status={selectedCase.priority} />
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-slate-400">Recovery Attempts:</span>
-                  <span className="font-mono text-slate-300">{selectedCase.attempt_count} / {selectedCase.max_attempts}</span>
+                  <span className="text-fg-muted">Recovery Attempts:</span>
+                  <span className="font-mono text-fg-secondary">{selectedCase.attempt_count} / {selectedCase.max_attempts}</span>
                 </div>
               </div>
             </div>
@@ -404,21 +442,21 @@ export default function CommandCenterPage() {
             {/* Customer Information */}
             {selectedCase.customer && (
               <div className="space-y-3">
-                <h3 className="text-xs font-mono font-semibold text-slate-300 uppercase tracking-wider">
+                <h3 className="text-xs font-mono font-semibold text-fg-secondary uppercase tracking-wider">
                   Associated Customer
                 </h3>
                 <div className="p-3.5 rounded-lg bg-surface-subtle border border-border space-y-2">
                   <div className="flex justify-between">
-                    <span className="text-slate-400">Name:</span>
-                    <span className="text-white font-medium">{selectedCase.customer.name || "N/A"}</span>
+                    <span className="text-fg-muted">Name:</span>
+                    <span className="text-fg font-medium">{selectedCase.customer.name || "N/A"}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-slate-400">Email:</span>
-                    <span className="font-mono text-blue-400">{selectedCase.customer.email || "N/A"}</span>
+                    <span className="text-fg-muted">Email:</span>
+                    <span className="font-mono text-status-info">{selectedCase.customer.email || "N/A"}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-slate-400">Total Lifetime Revenue:</span>
-                    <span className="font-mono text-emerald-400 font-semibold">
+                    <span className="text-fg-muted">Total Lifetime Revenue:</span>
+                    <span className="font-mono text-status-success font-semibold">
                       {formatINR(selectedCase.customer.total_payment_amount)}
                     </span>
                   </div>
@@ -441,28 +479,28 @@ export default function CommandCenterPage() {
           <div className="space-y-6 text-xs">
             <div className="p-4 rounded-lg bg-surface-subtle border border-border space-y-2 font-mono">
               <div className="flex justify-between">
-                <span className="text-slate-400">Event ID:</span>
-                <span className="text-white">{selectedEvent.razorpay_event_id}</span>
+                <span className="text-fg-muted">Event ID:</span>
+                <span className="text-fg">{selectedEvent.razorpay_event_id}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-400">Source:</span>
-                <span className="text-blue-400 uppercase">{selectedEvent.source}</span>
+                <span className="text-fg-muted">Source:</span>
+                <span className="text-status-info uppercase">{selectedEvent.source}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-400">Status:</span>
+                <span className="text-fg-muted">Status:</span>
                 <StatusBadge status={selectedEvent.processing_status} />
               </div>
             </div>
 
             {/* Normalized Data */}
             <div className="space-y-2">
-              <h3 className="font-mono text-slate-300 uppercase tracking-wider">Normalized Schema</h3>
+              <h3 className="font-mono text-fg-secondary uppercase tracking-wider">Normalized Schema</h3>
               <JsonViewer data={selectedEvent.normalized_data} title="NORMALIZED EVENT DATA" maxHeight="200px" />
             </div>
 
             {/* Raw Webhook Payload */}
             <div className="space-y-2">
-              <h3 className="font-mono text-slate-300 uppercase tracking-wider">Raw Razorpay Webhook Payload</h3>
+              <h3 className="font-mono text-fg-secondary uppercase tracking-wider">Raw Razorpay Webhook Payload</h3>
               <JsonViewer data={selectedEvent.raw_payload} title="RAW PAYLOAD" maxHeight="300px" />
             </div>
           </div>

@@ -42,28 +42,28 @@ export default function LiveEventsPage() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-border pb-6">
         <div>
           <div className="flex items-center space-x-2">
-            <Zap className="w-4 h-4 text-blue-400" />
-            <span className="text-xs font-mono tracking-wider text-slate-400 uppercase">
+            <Zap className="w-4 h-4 text-status-info" />
+            <span className="text-xs font-mono tracking-wider text-fg-muted uppercase">
               Event Ingestion Plane
             </span>
           </div>
-          <h1 className="text-2xl font-bold tracking-tight text-white font-mono mt-1">
+          <h1 className="text-2xl font-bold tracking-tight text-fg font-mono mt-1">
             LIVE REVENUE EVENTS
           </h1>
-          <p className="text-xs text-slate-400 mt-1">
+          <p className="text-xs text-fg-muted mt-1">
             Raw and normalized event logs received from Razorpay webhooks and simulation engines.
           </p>
         </div>
 
-        <div className="text-xs font-mono text-slate-400 bg-surface px-3 py-1.5 rounded-lg border border-border">
-          Total Ingested: <span className="text-white font-bold">{data?.total || 0}</span>
+        <div className="text-xs font-mono text-fg-muted bg-surface px-3 py-1.5 rounded-lg border border-border">
+          Total Ingested: <span className="text-fg font-bold">{data?.total || 0}</span>
         </div>
       </div>
 
       {/* Filter & Search Bar */}
       <div className="bg-surface p-4 rounded-lg border border-border flex flex-col md:flex-row items-center justify-between gap-3">
         <div className="relative flex-1 w-full">
-          <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-500" />
+          <Search className="w-4 h-4 absolute left-3 top-2.5 text-fg-faint" />
           <input
             type="text"
             placeholder="Search by event ID (e.g. evt_...)"
@@ -72,7 +72,7 @@ export default function LiveEventsPage() {
               setSearchQuery(e.target.value);
               setPage(1);
             }}
-            className="w-full bg-surface-subtle border border-border rounded-lg pl-9 pr-4 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-accent"
+            className="w-full bg-surface-subtle border border-border rounded-lg pl-9 pr-4 py-1.5 text-xs text-fg placeholder-fg-faint focus:outline-none focus:border-accent"
           />
         </div>
 
@@ -84,7 +84,7 @@ export default function LiveEventsPage() {
               setEventTypeFilter(e.target.value);
               setPage(1);
             }}
-            className="bg-surface-subtle border border-border rounded-lg px-3 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-accent font-mono"
+            className="bg-surface-subtle border border-border rounded-lg px-3 py-1.5 text-xs text-fg-secondary focus:outline-none focus:border-accent font-mono"
           >
             <option value="">All Event Types</option>
             <option value="payment.failed">payment.failed</option>
@@ -99,7 +99,7 @@ export default function LiveEventsPage() {
               setStatusFilter(e.target.value);
               setPage(1);
             }}
-            className="bg-surface-subtle border border-border rounded-lg px-3 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-accent font-mono"
+            className="bg-surface-subtle border border-border rounded-lg px-3 py-1.5 text-xs text-fg-secondary focus:outline-none focus:border-accent font-mono"
           >
             <option value="">All Statuses</option>
             <option value="processed">Processed</option>
@@ -130,7 +130,7 @@ export default function LiveEventsPage() {
           <>
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs">
-                <thead className="bg-surface-elevated/50 text-slate-400 font-mono text-[11px] uppercase border-b border-border">
+                <thead className="bg-surface-elevated/50 text-fg-muted font-mono text-[11px] uppercase border-b border-border">
                   <tr>
                     <th className="py-3 px-4">Event ID</th>
                     <th className="py-3 px-4">Event Type</th>
@@ -148,25 +148,25 @@ export default function LiveEventsPage() {
                       onClick={() => setSelectedEvent(event)}
                       className="hover:bg-surface-elevated/40 cursor-pointer transition-colors"
                     >
-                      <td className="py-3 px-4 font-mono font-medium text-blue-400">
+                      <td className="py-3 px-4 font-mono font-medium text-status-info">
                         {event.razorpay_event_id}
                       </td>
                       <td className="py-3 px-4">
                         <StatusBadge status={event.event_type} type="event" />
                       </td>
-                      <td className="py-3 px-4 text-slate-200">
+                      <td className="py-3 px-4 text-fg">
                         {event.normalized_data?.customer_name || event.normalized_data?.customer_email || "N/A"}
                       </td>
-                      <td className="py-3 px-4 font-mono font-semibold text-white tabular-nums">
+                      <td className="py-3 px-4 font-mono font-semibold text-fg tabular-nums">
                         {formatINR(event.normalized_data?.amount || "0")}
                       </td>
-                      <td className="py-3 px-4 font-mono uppercase text-slate-400 text-[11px]">
+                      <td className="py-3 px-4 font-mono uppercase text-fg-muted text-[11px]">
                         {event.source}
                       </td>
                       <td className="py-3 px-4">
                         <StatusBadge status={event.processing_status} />
                       </td>
-                      <td className="py-3 px-4 text-right font-mono text-slate-400">
+                      <td className="py-3 px-4 text-right font-mono text-fg-muted">
                         {formatDateTime(event.received_at)}
                       </td>
                     </tr>
@@ -176,23 +176,23 @@ export default function LiveEventsPage() {
             </div>
 
             {/* Pagination Controls */}
-            <div className="flex items-center justify-between px-4 py-3 border-t border-border bg-surface-subtle text-xs font-mono text-slate-400">
+            <div className="flex items-center justify-between px-4 py-3 border-t border-border bg-surface-subtle text-xs font-mono text-fg-muted">
               <div>
-                Page <span className="text-white font-medium">{page}</span> of{" "}
-                <span className="text-white font-medium">{totalPages || 1}</span>
+                Page <span className="text-fg font-medium">{page}</span> of{" "}
+                <span className="text-fg font-medium">{totalPages || 1}</span>
               </div>
               <div className="flex items-center space-x-2">
                 <button
                   disabled={page <= 1}
                   onClick={() => setPage((p) => Math.max(1, p - 1))}
-                  className="p-1 rounded bg-surface border border-border disabled:opacity-40 hover:bg-surface-elevated text-slate-300"
+                  className="p-1 rounded bg-surface border border-border disabled:opacity-40 hover:bg-surface-elevated text-fg-secondary"
                 >
                   <ChevronLeft className="w-4 h-4" />
                 </button>
                 <button
                   disabled={page >= totalPages}
                   onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                  className="p-1 rounded bg-surface border border-border disabled:opacity-40 hover:bg-surface-elevated text-slate-300"
+                  className="p-1 rounded bg-surface border border-border disabled:opacity-40 hover:bg-surface-elevated text-fg-secondary"
                 >
                   <ChevronRight className="w-4 h-4" />
                 </button>
@@ -215,28 +215,28 @@ export default function LiveEventsPage() {
             {/* Metadata Summary */}
             <div className="p-4 rounded-lg bg-surface-subtle border border-border space-y-2 font-mono">
               <div className="flex justify-between">
-                <span className="text-slate-400">Received Timestamp:</span>
-                <span className="text-white">{formatDateTime(selectedEvent.received_at)}</span>
+                <span className="text-fg-muted">Received Timestamp:</span>
+                <span className="text-fg">{formatDateTime(selectedEvent.received_at)}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-400">Processed Timestamp:</span>
-                <span className="text-white">{formatDateTime(selectedEvent.processed_at)}</span>
+                <span className="text-fg-muted">Processed Timestamp:</span>
+                <span className="text-fg">{formatDateTime(selectedEvent.processed_at)}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-400">Pipeline Ingestion Source:</span>
-                <span className="text-blue-400 uppercase">{selectedEvent.source}</span>
+                <span className="text-fg-muted">Pipeline Ingestion Source:</span>
+                <span className="text-status-info uppercase">{selectedEvent.source}</span>
               </div>
             </div>
 
             {/* Normalized Data */}
             <div className="space-y-2">
-              <h3 className="font-mono text-slate-300 uppercase tracking-wider">Normalized Schema</h3>
+              <h3 className="font-mono text-fg-secondary uppercase tracking-wider">Normalized Schema</h3>
               <JsonViewer data={selectedEvent.normalized_data} title="NORMALIZED SCHEMA" maxHeight="200px" />
             </div>
 
             {/* Raw Webhook Payload */}
             <div className="space-y-2">
-              <h3 className="font-mono text-slate-300 uppercase tracking-wider">Raw Payload (Preserved for Audit)</h3>
+              <h3 className="font-mono text-fg-secondary uppercase tracking-wider">Raw Payload (Preserved for Audit)</h3>
               <JsonViewer data={selectedEvent.raw_payload} title="RAW PAYLOAD" maxHeight="320px" />
             </div>
           </div>

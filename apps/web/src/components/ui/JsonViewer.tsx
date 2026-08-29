@@ -21,20 +21,20 @@ export function JsonViewer({ data, title, maxHeight = "400px" }: JsonViewerProps
 
   return (
     <div className="rounded-lg border border-border bg-surface-subtle overflow-hidden">
-      <div className="flex items-center justify-between px-3.5 py-2 bg-surface border-b border-border text-xs text-slate-400 font-mono">
+      <div className="flex items-center justify-between px-3.5 py-2 bg-surface border-b border-border text-xs text-fg-muted font-mono">
         <span>{title || "PAYLOAD (JSON)"}</span>
         <button
           onClick={handleCopy}
-          className="flex items-center gap-1 hover:text-white transition-colors text-slate-400"
+          className="flex items-center gap-1 hover:text-fg transition-colors text-fg-muted"
           title="Copy JSON"
         >
-          {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+          {copied ? <Check className="w-3.5 h-3.5 text-status-success" /> : <Copy className="w-3.5 h-3.5" />}
           <span>{copied ? "Copied" : "Copy"}</span>
         </button>
       </div>
       <pre
         style={{ maxHeight }}
-        className="p-4 text-xs font-mono text-slate-300 overflow-auto whitespace-pre leading-relaxed select-text"
+        className="p-4 text-xs font-mono text-fg-secondary overflow-auto whitespace-pre leading-relaxed select-text"
       >
         {jsonString}
       </pre>

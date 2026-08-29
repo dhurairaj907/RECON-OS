@@ -1,6 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  // three.js ships ESM that Next's server bundler needs to transpile; drei pulls it in.
+  transpilePackages: ["three"],
   async rewrites() {
     return [
       {
