@@ -105,12 +105,34 @@ def test_duplicate_webhook_idempotency(client, sample_payment_failed_payload, ma
     assert cases_res.json()["total"] == 1
 
 
-def test_malformed_json_webhook(client, monkeypatch, webhook_secret):
-    monkeypatch.setattr(settings, "RAZORPAY_WEBHOOK_SECRET", "")
+def test_malformed_json_webhook(client, monkeypatch, webhook_secret, make_signature):
+    monkeypatch.setattr(settings, "RAZORPAY_WEBHOOK_SECRET", webhook_secret)
+    raw = b"not a valid json payload"
     response = client.post(
         "/api/v1/webhooks/razorpay",
-        content=b"not a valid json payload",
-        headers={"Content-Type": "application/json"},
+        content=raw,
+        headers={"Content-Type": "application/json",
+                 "X-Razorpay-Signature": make_signature(raw)},
     )
     assert response.status_code == 400
     assert "Malformed JSON" in response.json()["detail"]
+
+
+def test_unsigned_webhook_rejected_by_default(client, monkeypatch, sample_payment_failed_payload):
+    """Fail-closed: no secret + no explicit opt-in -> webhook rejected."""
+    monkeypatch.setattr(settings, "RAZORPAY_WEBHOOK_SECRET", "")
+    monkeypatch.setattr(settings, "RAZORPAY_ALLOW_UNSIGNED_WEBHOOKS", False)
+    raw = json.dumps(sample_payment_failed_payload).encode()
+    r = client.post("/api/v1/webhooks/razorpay", content=raw,
+                    headers={"Content-Type": "application/json"})
+    assert r.status_code == 400
+    assert "signature" in r.json()["detail"].lower()
+
+
+def test_unsigned_webhook_allowed_with_explicit_dev_opt_in(client, monkeypatch, sample_payment_failed_payload):
+    monkeypatch.setattr(settings, "RAZORPAY_WEBHOOK_SECRET", "")
+    monkeypatch.setattr(settings, "RAZORPAY_ALLOW_UNSIGNED_WEBHOOKS", True)
+    raw = json.dumps(sample_payment_failed_payload).encode()
+    r = client.post("/api/v1/webhooks/razorpay", content=raw,
+                    headers={"Content-Type": "application/json"})
+    assert r.status_code == 200

@@ -50,7 +50,12 @@ class RecoveryAction(Base):
     action_version = Column(Integer, nullable=False, default=1)
 
     status = Column(String(30), nullable=False, default="PROPOSED", index=True)
+    # PENDING | RECOVERED | PARTIAL | FAILED | EXPIRED | CANCELLED | UNKNOWN
     outcome = Column(String(20), nullable=False, default="PENDING", index=True)
+
+    # True when the outcome was set by the (explicitly enabled) simulator rather
+    # than a real Razorpay payment / webhook / reconciliation.
+    simulated = Column(Boolean, nullable=False, default=False)
 
     # Idempotency — deterministic keys, unique at the DB level
     idempotency_key = Column(String(160), nullable=False, unique=True, index=True)
@@ -81,6 +86,14 @@ class RecoveryAction(Base):
 
     # Verification — the webhook event that confirmed recovery (double-count guard)
     verifying_event_id = Column(String(255), nullable=True)
+
+    # Human approval (Phase 4) — distinct from `approved_at` (automatic policy
+    # approval). Set ONLY by the approval endpoints; the executor re-validates
+    # policy fresh every time and only HONOURS this if policy still says
+    # NEEDS_APPROVAL (never if it now says REJECTED).
+    human_decision = Column(String(20), nullable=True)          # APPROVED | REJECTED
+    human_decided_at = Column(DateTime(timezone=True), nullable=True)
+    human_decided_by = Column(String(60), nullable=True)
 
     # Lifecycle timestamps
     requested_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

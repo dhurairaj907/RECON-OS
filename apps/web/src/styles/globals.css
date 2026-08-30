@@ -165,6 +165,16 @@
   background: rgb(var(--scrollbar-thumb-hover));
 }
 
+/* For strips that scroll internally but should never show a scrollbar —
+   e.g. the top nav pill row on narrower desktop widths. */
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
 /* Tabular figures for financial numbers */
 .tabular-nums {
   font-variant-numeric: tabular-nums;

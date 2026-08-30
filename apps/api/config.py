@@ -33,10 +33,26 @@ class Settings(BaseSettings):
     RAZORPAY_API_BASE: str = "https://api.razorpay.com/v1"
     RAZORPAY_TIMEOUT_SECONDS: float = 10.0
 
+    # Webhook signature: RECON rejects every inbound webhook unless it carries a
+    # valid HMAC-SHA256 signature verified against RAZORPAY_WEBHOOK_SECRET.
+    # The only way to accept unsigned webhooks is to opt in explicitly (dev only).
+    RAZORPAY_ALLOW_UNSIGNED_WEBHOOKS: bool = False
+
+    # --- Phase 3 (ACT): Simulator ---
+    # The simulator is NOT part of the real recovery path. When enabled it is
+    # marked simulated=true on every record and audit entry it produces.
+    RECON_SIMULATOR_ENABLED: bool = False
+
     # --- Application ---
     LOG_LEVEL: str = "INFO"
     CORS_ORIGINS: List[str] = ["http://localhost:3000"]
     DEFAULT_MERCHANT_NAME: str = "RECON Demo Merchant"
+
+    # --- Phase 4 (PROVE): minimal protection for financial action endpoints ---
+    # See security.py. Empty by default (open, for local dev/demo); set to a
+    # real shared secret before exposing the API beyond localhost.
+    RECON_API_KEY: str = ""
+    RECON_RATE_LIMIT_PER_MINUTE: int = 30
 
     # --- Phase 2 (THINK): Intelligence pipeline ---
     # When True, a new recovery case is analysed automatically after the Phase 1

@@ -122,12 +122,31 @@ def execute_action(db: Session, action_id) -> RecoveryAction:
                   "violated_rules": policy.violated_rules})
     db.commit()
 
-    if policy.verdict.value == "NEEDS_APPROVAL":
-        return _block(db, action, "NEEDS_APPROVAL", policy.reason)
     if policy.verdict.value == "REJECTED":
+        # A hard safety rejection (fraud block, exhausted attempts, disallowed
+        # strategy, unverified payment state). NEVER overridable by a human
+        # approval — clear any stale approval so it can't be reused if policy
+        # later flips back to NEEDS_APPROVAL for a different reason.
+        action.human_decision = None
+        action.human_decided_at = None
+        action.human_decided_by = None
         return _block(db, action, "POLICY_REJECTED", policy.reason)
 
-    # verdict == APPROVED
+    if policy.verdict.value == "NEEDS_APPROVAL":
+        if action.human_decision != "APPROVED":
+            return _block(db, action, "NEEDS_APPROVAL", policy.reason)
+        # A human approved this action AND the policy we just re-evaluated
+        # against CURRENT state still says NEEDS_APPROVAL (not REJECTED) —
+        # this is the only way a NEEDS_APPROVAL verdict is ever allowed to
+        # proceed to execution. Approval alone never bypasses the check above.
+        audit_action(db, action, "HUMAN_OPERATOR", "ACTION_APPROVAL_HONORED",
+                     f"Human approval on file ({action.human_decided_by or 'operator'} at "
+                     f"{action.human_decided_at}) — fresh re-validation still permits "
+                     f"proceeding for {action.reference_id}.",
+                     {"policy_verdict": policy.verdict.value})
+        db.commit()
+
+    # verdict == APPROVED (or a NEEDS_APPROVAL honoured above)
     action.status = "APPROVED"
     action.approved_at = _now()
     audit_action(db, action, "POLICY_ENGINE", "ACTION_APPROVED",
@@ -188,6 +207,27 @@ def execute_action(db: Session, action_id) -> RecoveryAction:
     )
 
     if not result.ok:
+        if result.error_code == "RAZORPAY_TIMEOUT":
+            # AMBIGUOUS outcome — the request may have reached Razorpay despite
+            # the client-side timeout. Do NOT mark FAILED (that would license a
+            # retry that could create a genuine duplicate Payment Link).
+            # `status` stays EXECUTING on purpose: the idempotency guard at the
+            # top of this function already refuses to re-execute an EXECUTING
+            # action, so no code change is needed there to block a blind retry.
+            action.outcome = "UNKNOWN"
+            action.error_code = result.error_code
+            action.error_message = result.error_message
+            audit_action(db, action, "RAZORPAY_ADAPTER", "ACTION_OUTCOME_UNKNOWN",
+                         f"Razorpay request timed out for {action.reference_id} — outcome "
+                         f"UNKNOWN, NOT marked failed (the request may have succeeded "
+                         f"server-side). Verification required before any retry.",
+                         {"error_code": result.error_code})
+            db.commit()
+            db.refresh(action)
+            logger.warning("Action %s outcome UNKNOWN after Razorpay timeout — "
+                           "verification required before any retry", action.reference_id)
+            return action
+
         action.status = "FAILED"
         action.error_code = result.error_code
         action.error_message = result.error_message

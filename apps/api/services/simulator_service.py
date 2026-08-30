@@ -47,6 +47,7 @@ def simulate_event(db: Session, request: SimulateEventRequest, merchant_id: uuid
         "account_id": "acc_recon_demo",
         "event": request.event_type,
         "contains": ["payment"],
+        "recon_simulated": True,
         "payload": {
             "payment": {
                 "entity": {
@@ -156,6 +157,9 @@ def simulate_payment_link_paid(
         "account_id": "acc_recon_demo",
         "event": "payment_link.paid",
         "contains": ["payment_link", "payment"],
+        # Provenance marker — a real Razorpay webhook can NEVER carry this.
+        # verify_payment_link_recovery() reads it and stamps simulated=true.
+        "recon_simulated": True,
         "payload": {
             "payment_link": {
                 "entity": {

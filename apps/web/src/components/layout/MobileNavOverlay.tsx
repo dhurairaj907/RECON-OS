@@ -9,7 +9,10 @@ import {
   Zap,
   ShieldAlert,
   BrainCircuit,
+  ClipboardCheck,
   Users,
+  BarChart3,
+  Scale,
   FlaskConical,
   ScrollText,
 } from "lucide-react";
@@ -20,7 +23,10 @@ const NAV_ITEMS = [
   { name: "Live Events", href: "/events", icon: Zap },
   { name: "Recovery", href: "/recovery", icon: ShieldAlert },
   { name: "Intelligence", href: "/intelligence", icon: BrainCircuit },
+  { name: "Approvals", href: "/approvals", icon: ClipboardCheck },
   { name: "Customers", href: "/customers", icon: Users },
+  { name: "Analytics", href: "/analytics", icon: BarChart3 },
+  { name: "Policies", href: "/policies", icon: Scale },
   { name: "Simulator", href: "/simulator", icon: FlaskConical },
   { name: "Audit Trail", href: "/audit-logs", icon: ScrollText },
 ];
@@ -129,7 +135,7 @@ export function MobileNavOverlay({ isOpen, onClose }: MobileNavOverlayProps) {
         <div className="border-t border-border p-4 font-mono text-xs text-fg-muted">
           <div className="flex items-center gap-2">
             <span className="h-1.5 w-1.5 rounded-full bg-status-success" />
-            <span className="font-medium text-fg-secondary">PHASE 3 (ACT)</span>
+            <span className="font-medium text-fg-secondary">PHASE 4 (PROVE)</span>
           </div>
           <div className="mt-1">Razorpay Integration Active</div>
         </div>

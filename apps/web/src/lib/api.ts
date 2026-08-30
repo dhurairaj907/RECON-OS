@@ -14,6 +14,8 @@ import {
   ProposeActionResponse,
   ExecuteActionResponse,
   ReconcileActionResponse,
+  AnalyticsMetrics,
+  PolicyOverview,
 } from "./types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -135,12 +137,32 @@ export const api = {
     fetcher<ExecuteActionResponse>(`/api/v1/actions/${actionId}/execute`, {
       method: "POST",
     }),
+  approveAction: (actionId: string) =>
+    fetcher<ExecuteActionResponse>(`/api/v1/actions/${actionId}/approve`, {
+      method: "POST",
+    }),
+  rejectAction: (actionId: string) =>
+    fetcher<ExecuteActionResponse>(`/api/v1/actions/${actionId}/reject`, {
+      method: "POST",
+    }),
+  verifyUnknownAction: (actionId: string) =>
+    fetcher<ExecuteActionResponse>(`/api/v1/actions/${actionId}/verify-unknown`, {
+      method: "POST",
+    }),
   reconcileAction: (actionId: string) =>
     fetcher<ReconcileActionResponse>(`/api/v1/actions/${actionId}/reconcile`, {
       method: "POST",
     }),
   getAction: (actionId: string) =>
     fetcher<RecoveryAction>(`/api/v1/actions/${actionId}`),
+  getAllActions: (params?: { page?: number; limit?: number; status?: string; outcome?: string }) => {
+    const q = new URLSearchParams();
+    if (params?.page) q.set("page", params.page.toString());
+    if (params?.limit) q.set("limit", params.limit.toString());
+    if (params?.status) q.set("status", params.status);
+    if (params?.outcome) q.set("outcome", params.outcome);
+    return fetcher<{ items: RecoveryAction[]; total: number }>(`/api/v1/actions?${q.toString()}`);
+  },
 
   // Simulator
   triggerSimulation: (request: SimulateEventRequest) =>
@@ -153,6 +175,12 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ action_id: actionId }),
     }),
+
+  // Analytics (Phase 4 — PROVE)
+  getAnalytics: () => fetcher<AnalyticsMetrics>("/api/v1/analytics"),
+
+  // Policies (Phase 4 — PROVE)
+  getPolicies: () => fetcher<PolicyOverview>("/api/v1/policies"),
 
   // Health
   getHealth: () => fetcher<{ status: string; service: string; database: string }>("/api/v1/health"),

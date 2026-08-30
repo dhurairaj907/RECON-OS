@@ -4,11 +4,16 @@ RECON OS — Actions Router  (Phase 3: ACT)
     GET  /api/v1/recovery-cases/{case_id}/actions            action history for a case
     POST /api/v1/recovery-cases/{case_id}/actions/propose    create/return an action proposal
     POST /api/v1/actions/{action_id}/execute                 execute (server re-checks policy)
+    POST /api/v1/actions/{action_id}/approve                 human approval (Phase 4) — re-validates, then executes
+    POST /api/v1/actions/{action_id}/reject                  human rejection (Phase 4) — terminal, never executes
+    POST /api/v1/actions/{action_id}/verify-unknown           resolve an UNKNOWN outcome (Phase 4) — never a blind retry
     GET  /api/v1/actions/{action_id}                         action status / result
     GET  /api/v1/actions                                     all actions (history)
 
 The frontend NEVER supplies a policy verdict, an approval, provider ids, or
-Razorpay credentials. The backend owns all of those.
+Razorpay credentials. The backend owns all of those. A human's approve/reject
+click only records a DECISION — it never bypasses the Policy Engine, which is
+always re-evaluated against current state before anything executes.
 """
 
 from __future__ import annotations
@@ -20,6 +25,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import desc
 from sqlalchemy.orm import Session, joinedload
 
+from config import settings
 from database import get_db, seed_default_merchant
 from models.recovery_action import RecoveryAction
 from models.recovery_case import RecoveryCase
@@ -27,10 +33,22 @@ from schemas.action import (
     ActionListResponse,
     ActionResponse,
     ExecuteActionResponse,
+    ReconcileActionResponse,
 )
+from security import rate_limit, require_api_key
+from services.actions.approval import approve_action, reject_action
 from services.actions.common import ui_state
 from services.actions.executor import execute_action
 from services.actions.proposal import build_proposal, get_or_create_action
+from services.actions.reconcile import reconcile_action
+from services.actions.unknown import verify_unknown_action
+
+# Applied to every endpoint that proposes, executes, approves, rejects,
+# verifies, or reconciles a recovery action — never to read-only GETs. See
+# security.py: an API key check (open by default for local dev) plus a
+# per-IP rate limit, sitting in front of the Policy Engine / idempotency
+# guards those endpoints already enforce, not replacing them.
+_PROTECTED = [Depends(require_api_key), Depends(rate_limit)]
 
 logger = logging.getLogger("recon.routers.actions")
 
@@ -57,6 +75,19 @@ def _case_number(db: Session, case_id) -> str | None:
     return c[0] if c else None
 
 
+def _load_action(db: Session, merchant_id, action_id: str) -> RecoveryAction:
+    try:
+        uid = UUID(action_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid action id")
+    action = db.query(RecoveryAction).filter(
+        RecoveryAction.id == uid, RecoveryAction.merchant_id == merchant_id
+    ).first()
+    if action is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Action not found")
+    return action
+
+
 def _to_response(db: Session, action: RecoveryAction) -> ActionResponse:
     return ActionResponse(
         id=str(action.id),
@@ -74,6 +105,8 @@ def _to_response(db: Session, action: RecoveryAction) -> ActionResponse:
         amount=action.amount,
         currency=action.currency,
         recovered_amount=action.recovered_amount or 0,
+        simulated=bool(action.simulated),
+        simulator_enabled=bool(settings.RECON_SIMULATOR_ENABLED),
         strategy_action=action.strategy_action,
         policy_verdict=action.policy_verdict,
         blocked_reason=action.blocked_reason,
@@ -85,6 +118,9 @@ def _to_response(db: Session, action: RecoveryAction) -> ActionResponse:
         completed_at=action.completed_at,
         created_at=action.created_at,
         updated_at=action.updated_at,
+        human_decision=action.human_decision,
+        human_decided_at=action.human_decided_at,
+        human_decided_by=action.human_decided_by,
     )
 
 
@@ -102,7 +138,7 @@ def list_case_actions(case_id: str, db: Session = Depends(get_db)):
     return ActionListResponse(items=[_to_response(db, r) for r in rows], total=len(rows))
 
 
-@router.post("/recovery-cases/{case_id}/actions/propose")
+@router.post("/recovery-cases/{case_id}/actions/propose", dependencies=_PROTECTED)
 def propose_case_action(case_id: str, db: Session = Depends(get_db)):
     """
     Build (and, if executable, persist) an action proposal from the latest
@@ -118,7 +154,7 @@ def propose_case_action(case_id: str, db: Session = Depends(get_db)):
     }
 
 
-@router.post("/actions/{action_id}/execute", response_model=ExecuteActionResponse)
+@router.post("/actions/{action_id}/execute", response_model=ExecuteActionResponse, dependencies=_PROTECTED)
 def execute_recovery_action(action_id: str, db: Session = Depends(get_db)):
     """
     Execute a proposed action. The Policy Engine is RE-EVALUATED server-side
@@ -150,6 +186,118 @@ def execute_recovery_action(action_id: str, db: Session = Depends(get_db)):
         msg = f"Action is {result.status}."
 
     return ExecuteActionResponse(ok=result.status == "EXECUTED", message=msg, action=resp)
+
+
+@router.post("/actions/{action_id}/approve", response_model=ExecuteActionResponse, dependencies=_PROTECTED)
+def approve_recovery_action(action_id: str, db: Session = Depends(get_db)):
+    """
+    Record a human APPROVE decision for a NEEDS_APPROVAL action, then execute
+    through the real Action Engine. Approval never bypasses safety checks: the
+    engine independently re-derives case state and re-evaluates policy, and
+    only proceeds if that fresh check still permits it (still NEEDS_APPROVAL,
+    honouring this decision, or now APPROVED outright — never if now
+    REJECTED). Never trusts a stored/frontend "approved" value.
+    """
+    merchant = seed_default_merchant(db)
+    action = _load_action(db, merchant.id, action_id)
+
+    result = approve_action(db, action.id, decided_by="OPERATOR")
+    resp = _to_response(db, result)
+
+    if result.status == "EXECUTED":
+        msg = "Approved and executed — Payment Link created. Awaiting customer payment."
+    elif result.status == "BLOCKED" and result.blocked_reason == "NEEDS_APPROVAL":
+        msg = "Approval recorded, but re-validation still requires approval."
+    elif result.status == "BLOCKED":
+        msg = f"Approved, but execution is no longer valid: {result.blocked_reason} — {result.error_message}"
+    elif result.status == "FAILED":
+        msg = f"Approved, but execution failed: {result.error_code} — {result.error_message}"
+    elif (result.outcome or "").upper() == "UNKNOWN":
+        msg = "Approved and execution attempted, but the outcome is UNKNOWN — verification required."
+    else:
+        msg = f"Action is {result.status}."
+
+    return ExecuteActionResponse(ok=result.status == "EXECUTED", message=msg, action=resp)
+
+
+@router.post("/actions/{action_id}/reject", response_model=ExecuteActionResponse, dependencies=_PROTECTED)
+def reject_recovery_action(action_id: str, db: Session = Depends(get_db)):
+    """
+    Record a human REJECT decision. Terminal — this action will never be
+    executed. The recovery case itself is untouched; a new action can still
+    be proposed later if circumstances change.
+    """
+    merchant = seed_default_merchant(db)
+    action = _load_action(db, merchant.id, action_id)
+
+    result = reject_action(db, action.id, decided_by="OPERATOR")
+    resp = _to_response(db, result)
+    return ExecuteActionResponse(
+        ok=False,
+        message="Rejected — this action will not be executed.",
+        action=resp,
+    )
+
+
+@router.post("/actions/{action_id}/verify-unknown", response_model=ExecuteActionResponse, dependencies=_PROTECTED)
+def verify_unknown_recovery_action(action_id: str, db: Session = Depends(get_db)):
+    """
+    Resolve an UNKNOWN outcome by asking Razorpay directly whether the
+    Payment Link was actually created — NEVER a blind retry. Safe to repeat;
+    idempotent (a no-op once the action is no longer UNKNOWN).
+    """
+    merchant = seed_default_merchant(db)
+    action = _load_action(db, merchant.id, action_id)
+
+    result = verify_unknown_action(db, action.id)
+    resp = _to_response(db, result)
+
+    if (result.outcome or "").upper() == "UNKNOWN":
+        msg = "Still unable to verify with Razorpay — outcome remains unknown. No retry allowed yet."
+        ok = False
+    elif result.status == "EXECUTED":
+        msg = "Verified — the Payment Link was actually created despite the timeout. No duplicate was made."
+        ok = True
+    elif result.status == "FAILED":
+        msg = "Verified — the original request never reached Razorpay. A new attempt is now policy-gated and safe."
+        ok = False
+    else:
+        msg = f"Action is {result.status}/{result.outcome}."
+        ok = False
+
+    return ExecuteActionResponse(ok=ok, message=msg, action=resp)
+
+
+@router.post("/actions/{action_id}/reconcile", response_model=ReconcileActionResponse, dependencies=_PROTECTED)
+def reconcile_recovery_action(action_id: str, db: Session = Depends(get_db)):
+    """
+    Ask Razorpay directly whether this action's payment link was actually paid
+    (GET /v1/payment_links/{id}) and, ONLY if Razorpay reports status == "paid"
+    with the full amount, mark the action RECOVERED. Never fakes a result.
+    Safe to repeat; idempotent.
+    """
+    merchant = seed_default_merchant(db)
+    try:
+        uid = UUID(action_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid action id")
+
+    action = db.query(RecoveryAction).filter(
+        RecoveryAction.id == uid, RecoveryAction.merchant_id == merchant.id
+    ).first()
+    if action is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Action not found")
+
+    res = reconcile_action(db, action.id)
+    return ReconcileActionResponse(
+        ok=res.ok,
+        recovered=res.recovered,
+        partial=res.partial,
+        razorpay_status=res.razorpay_status,
+        amount_paid=res.amount_paid,
+        message=res.message,
+        action=_to_response(db, res.action),
+    )
 
 
 @router.get("/actions/{action_id}", response_model=ActionResponse)

@@ -7,6 +7,7 @@ from integrations.razorpay.normalizer import normalize_razorpay_event
 from integrations.razorpay.adapter import (
     RazorpayAdapter,
     PaymentLinkResult,
+    PaymentLinkStatusResult,
     get_razorpay_adapter,
 )
 
@@ -15,5 +16,6 @@ __all__ = [
     "normalize_razorpay_event",
     "RazorpayAdapter",
     "PaymentLinkResult",
+    "PaymentLinkStatusResult",
     "get_razorpay_adapter",
 ]

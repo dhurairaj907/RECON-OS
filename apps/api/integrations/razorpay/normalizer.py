@@ -75,4 +75,7 @@ def normalize_razorpay_event(raw_payload: Dict[str, Any], event_id_override: Opt
         "payment_link_status": payment_link_entity.get("status"),
         "payment_link_amount": payment_link_entity.get("amount"),
         "payment_link_amount_paid": payment_link_entity.get("amount_paid"),
+        # True only for events produced by the explicitly-enabled RECON simulator.
+        # A real Razorpay webhook can never set this.
+        "recon_simulated": bool(raw_payload.get("recon_simulated", False)),
     }

@@ -22,6 +22,7 @@ class DailyTrendItem(BaseModel):
 
 
 class DashboardMetrics(BaseModel):
+    merchant_name: str
     revenue_at_risk: Decimal
     revenue_secured: Decimal
     active_recovery_cases: int

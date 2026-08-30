@@ -1,20 +1,22 @@
 """
-RECON OS — Phase 3: Outcome Verification
+RECON OS — Phase 3: Outcome Verification  (SAFETY-CRITICAL)
 
-Called from the Phase 1 event processor when a `payment_link.paid` webhook
-arrives. Correlates the event to a RECON action via `reference_id` (preferred)
-or the Razorpay payment link id, then:
+Turns "Razorpay says this payment link was paid" into a validated RECON recovery.
+Reached from two authoritative sources ONLY:
 
-  * marks the action outcome RECOVERED
-  * records the actually-paid amount
-  * resolves the recovery case and sets `amount_recovered`
-  * writes the audit trail
+  1. a signature-verified `payment_link.paid` webhook   (event_processor step 6a)
+  2. an authoritative reconcile pull GET /v1/payment_links/{id}  (actions/reconcile.py)
 
-Double-count safe:
-  * upstream: the RevenueEvent unique constraint blocks re-processing the same event
-  * here: if the action is already RECOVERED, revenue is NOT touched again
+The gated simulator (when explicitly enabled) also routes here, but every record
+and audit entry it produces is stamped `simulated=true`.
 
-Creating a Payment Link never marks revenue recovered — only this path does.
+`apply_recovery()` is the single validated state transition — used by all three
+paths. It enforces, in order:
+
+  * idempotency         (already RECOVERED -> no double count)
+  * action-state check  (must be an action WE executed, with a real payment link)
+  * currency match
+  * FULL amount         (amount_paid >= expected -> RECOVERED ; else -> PARTIAL, case NOT resolved)
 """
 
 from __future__ import annotations
@@ -36,63 +38,102 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _amount_recovered(normalized: dict, action: RecoveryAction) -> Decimal:
-    paise = (
-        normalized.get("payment_link_amount_paid")
-        or normalized.get("amount_paise")
-        or normalized.get("payment_link_amount")
-        or action.amount_paise
-    )
-    if paise:
-        try:
-            return (Decimal(str(paise)) / Decimal("100")).quantize(Decimal("0.01"))
-        except Exception:
-            pass
-    return Decimal(action.amount or 0)
+def _audit(db, action: RecoveryAction, event: str, detail: str, meta: dict):
+    base = {"action_id": str(action.id), "reference_id": action.reference_id,
+            "payment_link_id": action.provider_action_id}
+    base.update(meta)
+    db.add(AuditLog(
+        merchant_id=action.merchant_id,
+        recovery_case_id=action.recovery_case_id,
+        actor="RECON_ENGINE",
+        action=event,
+        detail=detail,
+        metadata_json=base,
+    ))
 
 
-def verify_payment_link_recovery(
-    db: Session, normalized: dict, merchant_id, revenue_event_id: str
-) -> RecoveryAction | None:
-    """Returns the matched action (updated) or None if no RECON action matches."""
-    ref = normalized.get("payment_link_reference_id")
-    plink_id = normalized.get("razorpay_payment_link_id")
-    if not ref and not plink_id:
-        return None
-
+def _find_action(db: Session, merchant_id, *, reference_id: str | None,
+                 payment_link_id: str | None) -> RecoveryAction | None:
     q = db.query(RecoveryAction).filter(RecoveryAction.merchant_id == merchant_id)
     action = None
-    if ref:
-        action = q.filter(RecoveryAction.reference_id == ref).first()
-    if action is None and plink_id:
-        action = q.filter(RecoveryAction.provider_action_id == plink_id).first()
-    if action is None:
-        logger.info("payment_link.paid: no RECON action for ref=%s plink=%s", ref, plink_id)
-        return None
+    if reference_id:
+        action = q.filter(RecoveryAction.reference_id == reference_id).first()
+    if action is None and payment_link_id:
+        action = q.filter(RecoveryAction.provider_action_id == payment_link_id).first()
+    return action
 
-    event_id = normalized.get("razorpay_event_id") or revenue_event_id
 
-    # --- DOUBLE-COUNT GUARD -------------------------------------------------
+# ---------------------------------------------------------------------------
+# The single validated state transition
+# ---------------------------------------------------------------------------
+def apply_recovery(
+    db: Session,
+    action: RecoveryAction,
+    *,
+    amount_paid_paise: int | None,
+    currency: str | None,
+    source_event_id: str,
+    provider_status: str | None = "paid",
+    simulated: bool = False,
+) -> RecoveryAction:
+    """Validate a 'paid' signal and, only if it passes every check, mark RECOVERED."""
+    tag = "SIMULATED " if simulated else ""
+
+    # 1. Idempotency — never double-count
     if (action.outcome or "").upper() == "RECOVERED":
-        db.add(AuditLog(
-            merchant_id=merchant_id,
-            recovery_case_id=action.recovery_case_id,
-            actor="RECON_ENGINE",
-            action="RECOVERY_ALREADY_VERIFIED",
-            detail=f"Duplicate payment_link.paid for {action.reference_id} ignored "
-                   f"(revenue not double-counted)",
-            metadata_json={"action_id": str(action.id), "event_id": event_id,
-                           "reference_id": action.reference_id},
-        ))
+        _audit(db, action, "RECOVERY_ALREADY_VERIFIED",
+               f"{tag}Duplicate paid signal for {action.reference_id} ignored — revenue not double-counted",
+               {"source_event_id": source_event_id, "simulated": simulated})
         return action
 
-    recovered = _amount_recovered(normalized, action)
+    # 2. Action-state check — must be an action RECON actually executed
+    if (action.status or "").upper() != "EXECUTED" or not action.provider_action_id:
+        _audit(db, action, "RECOVERY_REJECTED",
+               f"{tag}Paid signal rejected — action {action.reference_id} is "
+               f"{action.status}/{action.outcome} with no executed payment link",
+               {"source_event_id": source_event_id, "reason": "ACTION_NOT_EXECUTED",
+                "simulated": simulated})
+        return action
 
+    expected_paise = int(action.amount_paise or 0)
+    paid_paise = int(amount_paid_paise or 0)
+    action_currency = (action.currency or "INR").upper()
+    ev_currency = (currency or action_currency).upper()
+
+    # 3. Currency match
+    if ev_currency != action_currency:
+        _audit(db, action, "RECOVERY_REJECTED",
+               f"{tag}Paid signal rejected — currency mismatch "
+               f"(expected {action_currency}, got {ev_currency})",
+               {"source_event_id": source_event_id, "reason": "CURRENCY_MISMATCH",
+                "expected_currency": action_currency, "event_currency": ev_currency,
+                "simulated": simulated})
+        return action
+
+    # 4. FULL amount required
+    if paid_paise < expected_paise:
+        partial_amt = (Decimal(paid_paise) / Decimal("100")).quantize(Decimal("0.01"))
+        action.outcome = "PARTIAL"
+        action.provider_status = provider_status or "partially_paid"
+        action.recovered_amount = Decimal("0.00")   # PARTIAL is NOT recovered revenue
+        action.simulated = bool(simulated)
+        _audit(db, action, "RECOVERY_PARTIAL",
+               f"{tag}Partial payment on {action.reference_id}: paid {action_currency} {partial_amt} "
+               f"of {action_currency} {(Decimal(expected_paise)/100):.2f} — NOT recovered, case NOT resolved",
+               {"source_event_id": source_event_id, "amount_paid": str(partial_amt),
+                "amount_expected": str(Decimal(expected_paise) / 100), "simulated": simulated})
+        logger.info("Recovery PARTIAL for %s (%s of %s paise)", action.reference_id,
+                    paid_paise, expected_paise)
+        return action
+
+    # 5. RECOVERED
+    recovered = (Decimal(paid_paise) / Decimal("100")).quantize(Decimal("0.01"))
     action.outcome = "RECOVERED"
-    action.provider_status = normalized.get("payment_link_status") or "paid"
+    action.provider_status = "paid"
     action.recovered_amount = recovered
     action.completed_at = _now()
-    action.verifying_event_id = event_id
+    action.verifying_event_id = source_event_id
+    action.simulated = bool(simulated)
 
     case = db.query(RecoveryCase).filter(RecoveryCase.id == action.recovery_case_id).first()
     if case is not None and (case.status or "").upper() not in ("RESOLVED", "CLOSED"):
@@ -100,34 +141,87 @@ def verify_payment_link_recovery(
         case.amount_recovered = recovered
         case.resolved_at = _now()
 
-    db.add(AuditLog(
-        merchant_id=merchant_id,
-        recovery_case_id=action.recovery_case_id,
-        actor="RECON_ENGINE",
-        action="RECOVERY_VERIFIED",
-        detail=(f"Payment confirmed via payment_link.paid — {action.reference_id} "
-                f"recovered {case.currency if case else 'INR'} {recovered}"),
-        metadata_json={
-            "action_id": str(action.id),
-            "reference_id": action.reference_id,
-            "payment_link_id": action.provider_action_id,
-            "recovered_amount": str(recovered),
-            "event_id": event_id,
-        },
-    ))
+    _audit(db, action, "RECOVERY_VERIFIED",
+           f"{tag}Payment confirmed for {action.reference_id} — recovered "
+           f"{action_currency} {recovered}"
+           + (" (SIMULATED — not a real payment)" if simulated else ""),
+           {"source_event_id": source_event_id, "recovered_amount": str(recovered),
+            "provider_status": provider_status, "simulated": simulated})
     if case is not None:
-        db.add(AuditLog(
-            merchant_id=merchant_id,
-            recovery_case_id=case.id,
-            actor="RECON_ENGINE",
-            action="RECOVERY_CASE_RESOLVED",
-            detail=f"Resolved case {case.case_number} via verified Payment Link recovery of "
-                   f"{case.currency} {recovered}",
-            metadata_json={"case_number": case.case_number,
-                           "reference_id": action.reference_id,
-                           "amount_recovered": str(recovered)},
-        ))
-    logger.info("Recovery VERIFIED for %s via %s (%s)",
-                case.case_number if case else action.recovery_case_id,
-                action.reference_id, event_id)
+        _audit(db, action, "RECOVERY_CASE_RESOLVED",
+               f"{tag}Resolved case {case.case_number} via verified Payment Link recovery of "
+               f"{action_currency} {recovered}"
+               + (" (SIMULATED)" if simulated else ""),
+               {"case_number": case.case_number, "amount_recovered": str(recovered),
+                "simulated": simulated})
+    logger.info("Recovery %sVERIFIED for %s via %s",
+                "(SIMULATED) " if simulated else "",
+                case.case_number if case else action.recovery_case_id, source_event_id)
     return action
+
+
+def mark_link_terminal(db: Session, action: RecoveryAction, plink_status: str,
+                       source_event_id: str) -> RecoveryAction:
+    """Record an expired / cancelled payment link (case is NOT resolved)."""
+    s = (plink_status or "").lower()
+    outcome = "EXPIRED" if s == "expired" else "CANCELLED" if s == "cancelled" else None
+    if outcome is None or (action.outcome or "").upper() in ("RECOVERED", "PARTIAL"):
+        return action
+    action.outcome = outcome
+    action.provider_status = s
+    _audit(db, action, "RECOVERY_FAILED",
+           f"Payment link {action.reference_id} is {s} — recovery not completed",
+           {"source_event_id": source_event_id, "plink_status": s})
+    return action
+
+
+# ---------------------------------------------------------------------------
+# Webhook path (event_processor step 6a)
+# ---------------------------------------------------------------------------
+def verify_payment_link_recovery(
+    db: Session, normalized: dict, merchant_id, revenue_event_id: str
+) -> RecoveryAction | None:
+    """
+    Handle a `payment_link.*` event that has ALREADY passed signature verification
+    and event-idempotency in the pipeline. Returns the matched action or None.
+    """
+    ref = normalized.get("payment_link_reference_id")
+    plink_id = normalized.get("razorpay_payment_link_id")
+    if not ref and not plink_id:
+        return None
+
+    action = _find_action(db, merchant_id, reference_id=ref, payment_link_id=plink_id)
+    if action is None:
+        logger.info("payment_link event: no RECON action for ref=%s plink=%s", ref, plink_id)
+        return None
+
+    event_id = normalized.get("razorpay_event_id") or revenue_event_id
+    simulated = bool(normalized.get("recon_simulated"))
+    plink_status = (normalized.get("payment_link_status") or "").lower()
+
+    if plink_status in ("expired", "cancelled"):
+        return mark_link_terminal(db, action, plink_status, event_id)
+
+    # "paid" (full) or "partially_paid" — apply_recovery enforces the full-amount
+    # rule: >= expected -> RECOVERED ; short -> PARTIAL (case NOT resolved).
+    if plink_status not in ("paid", "partially_paid"):
+        _audit(db, action, "RECOVERY_REJECTED",
+               f"payment_link event ignored — payment_link.status='{plink_status or 'unknown'}' "
+               f"(not paid / partially_paid)",
+               {"source_event_id": event_id, "reason": "STATUS_NOT_PAID",
+                "plink_status": plink_status, "simulated": simulated})
+        return action
+
+    amount_paid = (
+        normalized.get("payment_link_amount_paid")
+        or normalized.get("amount_paise")
+        or normalized.get("payment_link_amount")
+    )
+    return apply_recovery(
+        db, action,
+        amount_paid_paise=amount_paid,
+        currency=normalized.get("currency"),
+        source_event_id=event_id,
+        provider_status=plink_status,
+        simulated=simulated,
+    )

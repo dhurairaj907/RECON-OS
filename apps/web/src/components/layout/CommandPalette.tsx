@@ -12,6 +12,9 @@ import {
   ScrollText,
   ArrowRight,
   BrainCircuit,
+  ClipboardCheck,
+  BarChart3,
+  Scale,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -25,7 +28,10 @@ const NAV_ITEMS = [
   { name: "Live Events Feed", href: "/events", icon: Zap },
   { name: "Recovery Cases", href: "/recovery", icon: ShieldAlert },
   { name: "Intelligence Analyses", href: "/intelligence", icon: BrainCircuit },
+  { name: "Approvals Queue", href: "/approvals", icon: ClipboardCheck },
   { name: "Customer Intelligence", href: "/customers", icon: Users },
+  { name: "Revenue Analytics", href: "/analytics", icon: BarChart3 },
+  { name: "Policy Engine", href: "/policies", icon: Scale },
   { name: "Event Simulator Lab", href: "/simulator", icon: FlaskConical },
   { name: "Audit Trail", href: "/audit-logs", icon: ScrollText },
 ];

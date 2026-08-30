@@ -24,6 +24,8 @@ from routers import (
     health_router,
     intelligence_router,
     actions_router,
+    analytics_router,
+    policies_router,
 )
 
 
@@ -55,9 +57,19 @@ async def lifespan(app: FastAPI):
     _rzp_configured = bool(settings.RAZORPAY_KEY_ID and settings.RAZORPAY_KEY_SECRET)
     _rzp_test_key = settings.RAZORPAY_KEY_ID.startswith("rzp_test_")
     logger.info(
-        "Razorpay (Phase 3 ACT): configured=%s test_mode=%s test_key=%s",
+        "Razorpay (Phase 3 ACT): configured=%s test_mode=%s test_key=%s "
+        "webhook_secret_set=%s allow_unsigned_webhooks=%s simulator_enabled=%s",
         _rzp_configured, settings.RAZORPAY_TEST_MODE, _rzp_test_key,
+        bool(settings.RAZORPAY_WEBHOOK_SECRET),
+        settings.RAZORPAY_ALLOW_UNSIGNED_WEBHOOKS,
+        settings.RECON_SIMULATOR_ENABLED,
     )
+    if not settings.RECON_API_KEY:
+        logger.warning(
+            "RECON_API_KEY is not set — financial action endpoints (propose/execute/"
+            "approve/reject/verify-unknown/reconcile) are open to any caller who knows "
+            "the URL. Set RECON_API_KEY before exposing this API beyond localhost."
+        )
 
     yield
 
@@ -82,6 +94,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def security_headers(request, call_next):
+    """Baseline response hardening — cheap, safe, applies to every response."""
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return response
+
+
 # API Version 1 prefix
 API_V1_PREFIX = "/api/v1"
 
@@ -97,6 +120,8 @@ app.include_router(audit_logs_router, prefix=API_V1_PREFIX)
 app.include_router(simulator_router, prefix=API_V1_PREFIX)
 app.include_router(intelligence_router, prefix=API_V1_PREFIX)
 app.include_router(actions_router, prefix=API_V1_PREFIX)
+app.include_router(analytics_router, prefix=API_V1_PREFIX)
+app.include_router(policies_router, prefix=API_V1_PREFIX)
 
 
 if __name__ == "__main__":

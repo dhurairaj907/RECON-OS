@@ -7,13 +7,15 @@ its neutral default.
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
+from config import settings
 from models.customer import Customer
 from models.payment import Payment
+from models.recovery_action import RecoveryAction
 from models.recovery_case import RecoveryCase
 from schemas.intelligence import CaseContext
 from services.intelligence.weights import amount_band
@@ -31,6 +33,32 @@ def _aware(dt: datetime | None) -> datetime | None:
     if dt.tzinfo is None:
         return dt.replace(tzinfo=timezone.utc)
     return dt
+
+
+def _count_recent_customer_contacts(db: Session, case: RecoveryCase) -> int:
+    """
+    Real count backing RULE_CONTACT_LIMIT (policy_engine.py) — NOT a hardcoded
+    value. RECON OS has no email/SMS sender in this phase (Payment Link
+    creation is the only outbound-facing action it performs), so a customer
+    "contact" is interpreted as an executed CREATE_PAYMENT_LINK action for
+    this customer, across any of their recovery cases, within the configured
+    window. Boundary/limitation: if a future phase adds a real notification
+    channel (email/SMS), this should count THAT event instead of/in addition
+    to Payment Link creation.
+    """
+    if case.customer_id is None:
+        return 0
+    cutoff = _utcnow() - timedelta(hours=int(settings.POLICY_CONTACT_WINDOW_HOURS))
+    return (
+        db.query(RecoveryAction)
+        .join(RecoveryCase, RecoveryAction.recovery_case_id == RecoveryCase.id)
+        .filter(
+            RecoveryCase.customer_id == case.customer_id,
+            RecoveryAction.executed_at.isnot(None),
+            RecoveryAction.executed_at >= cutoff,
+        )
+        .count()
+    )
 
 
 def build_case_context(db: Session, case: RecoveryCase) -> CaseContext:
@@ -86,6 +114,8 @@ def build_case_context(db: Session, case: RecoveryCase) -> CaseContext:
 
     amount = Decimal(case.amount_at_risk or 0)
 
+    contacts_last_window = _count_recent_customer_contacts(db, case)
+
     return CaseContext(
         case_id=str(case.id),
         case_number=case.case_number,
@@ -115,6 +145,6 @@ def build_case_context(db: Session, case: RecoveryCase) -> CaseContext:
         previous_recovery_cases=prev_cases,
         previous_resolved_cases=prev_resolved,
         previous_recovery_attempts=prev_attempts,
-        customer_contacts_last_24h=0,  # Phase 3 will populate real contact history
+        customer_contacts_last_24h=contacts_last_window,
         amount_band=amount_band(amount),
     )

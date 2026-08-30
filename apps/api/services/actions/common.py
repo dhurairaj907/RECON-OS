@@ -36,6 +36,11 @@ def to_paise(amount: Decimal) -> int:
 def ui_state(action: RecoveryAction) -> str:
     status = (action.status or "").upper()
     outcome = (action.outcome or "").upper()
+    if outcome == "UNKNOWN":
+        # Ambiguous provider outcome (e.g. a create-side timeout) takes
+        # priority over status — never render this as FAILED or as a normal
+        # in-progress state. Resolved only by explicit verification.
+        return "UNKNOWN"
     if status == "BLOCKED":
         if (action.blocked_reason or "") == "NEEDS_APPROVAL":
             return "NEEDS_APPROVAL"
@@ -51,7 +56,7 @@ def ui_state(action: RecoveryAction) -> str:
     if status == "EXECUTED":
         if outcome == "RECOVERED":
             return "RECOVERED"
-        if outcome in ("FAILED", "EXPIRED", "CANCELLED"):
+        if outcome in ("PARTIAL", "FAILED", "EXPIRED", "CANCELLED"):
             return outcome
         return "WAITING_FOR_PAYMENT"
     return status or "READY"

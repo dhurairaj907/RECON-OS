@@ -32,14 +32,23 @@ FAKE_SECRET = "fake_rzp_secret_MUST_NEVER_LEAK_9x7"
 # ---------------------------------------------------------------------------
 @pytest.fixture
 def razorpay_env(monkeypatch):
-    """Configured Razorpay TEST env + a controllable fake httpx client."""
+    """Configured Razorpay TEST env + a controllable fake httpx client (POST + GET)."""
     monkeypatch.setattr(settings, "RAZORPAY_KEY_ID", "rzp_test_FAKEKEY0001")
     monkeypatch.setattr(settings, "RAZORPAY_KEY_SECRET", FAKE_SECRET)
     monkeypatch.setattr(settings, "RAZORPAY_TEST_MODE", True)
 
-    state = {"mode": "success", "status": 200, "body": None, "calls": []}
+    state = {
+        "mode": "success", "status": 200, "body": None, "calls": [],
+        # GET /payment_links/{id} — what Razorpay "reports" during reconcile:
+        "link_status": "created", "link_amount": 499900, "link_amount_paid": 0,
+        "link_currency": "INR", "get_calls": [],
+        # GET /payment_links (list/search) — used by find_payment_link_by_reference
+        # to resolve an UNKNOWN (create-timeout) outcome. Empty by default (not
+        # found); Phase 4 tests populate this to simulate "it was actually created".
+        "search_items": [],
+    }
 
-    class _Resp:
+    class _PostResp:
         def __init__(self, ref, amt):
             self.status_code = state["status"]
             self._ref, self._amt = ref, amt
@@ -55,6 +64,25 @@ def razorpay_env(monkeypatch):
                 "amount": self._amt,
                 "currency": "INR",
             }
+
+    class _GetResp:
+        status_code = 200
+
+        def json(self):
+            return {
+                "id": state["get_calls"][-1],
+                "status": state["link_status"],
+                "amount": state["link_amount"],
+                "amount_paid": state["link_amount_paid"],
+                "currency": state["link_currency"],
+                "payments": [],
+            }
+
+    class _ListResp:
+        status_code = 200
+
+        def json(self):
+            return {"items": state["search_items"]}
 
     class _Client:
         def __init__(self, *a, **k):
@@ -72,10 +100,50 @@ def razorpay_env(monkeypatch):
                 raise httpx.TimeoutException("slow")
             if state["mode"] == "transport":
                 raise httpx.ConnectError("boom")
-            return _Resp(json["reference_id"], json["amount"])
+            return _PostResp(json["reference_id"], json["amount"])
+
+        def get(self, url, auth=None, **k):
+            if url.endswith("/payment_links"):
+                # list/search endpoint — find_payment_link_by_reference
+                if state["mode"] == "timeout":
+                    raise httpx.TimeoutException("slow")
+                return _ListResp()
+            state["get_calls"].append(url.rsplit("/", 1)[-1])
+            if state["mode"] == "timeout":
+                raise httpx.TimeoutException("slow")
+            return _GetResp()
 
     monkeypatch.setattr("integrations.razorpay.adapter.httpx.Client", _Client)
     return state
+
+
+@pytest.fixture
+def webhook_env(monkeypatch, webhook_secret):
+    monkeypatch.setattr(settings, "RAZORPAY_WEBHOOK_SECRET", webhook_secret)
+    return webhook_secret
+
+
+def signed_payment_link_webhook(client, make_signature, *, plink_id, ref,
+                                event_id, amount=499900, amount_paid=499900,
+                                currency="INR", plink_status="paid", event="payment_link.paid"):
+    body = {
+        "entity": "event", "event": event, "contains": ["payment_link", "payment"],
+        "id": event_id,
+        "payload": {
+            "payment_link": {"entity": {
+                "id": plink_id, "reference_id": ref, "amount": amount,
+                "amount_paid": amount_paid, "currency": currency,
+                "status": plink_status, "created_at": 1620000000}},
+            "payment": {"entity": {
+                "id": "pay_" + event_id, "amount": amount_paid, "currency": currency,
+                "status": "captured", "method": "upi", "created_at": 1620000000}},
+        },
+        "created_at": 1620000000,
+    }
+    raw = json.dumps(body).encode()
+    return client.post("/api/v1/webhooks/razorpay", content=raw,
+                       headers={"Content-Type": "application/json",
+                                "X-Razorpay-Signature": make_signature(raw)})
 
 
 def upi_timeout_payload(pid="pay_upi_1", eid="evt_upi_1", amount_paise=499900):
@@ -343,15 +411,41 @@ def test_execute_is_idempotent_no_duplicate_link(db_session, razorpay_env):
 
 
 def test_adapter_failure_marks_action_failed(db_session, razorpay_env):
+    """
+    A Razorpay TIMEOUT is ambiguous (the request may have reached Razorpay
+    despite the client-side timeout) — Phase 4 requires it be marked UNKNOWN,
+    never FAILED, and never blindly retried. See test_phase4_safety.py for the
+    full UNKNOWN -> verify -> resolve chain; a definitive (non-timeout) error
+    is still marked FAILED and IS safely retryable, covered below.
+    """
     razorpay_env["mode"] = "timeout"
     case = _analyzed_case(db_session, upi_timeout_payload())
     action = _proposed_action(db_session, case)
     result = execute_action(db_session, action.id)
-    assert result.status == "FAILED"
+    assert result.status != "FAILED"
+    assert result.outcome == "UNKNOWN"
     assert result.error_code == "RAZORPAY_TIMEOUT"
     assert result.provider_action_id is None
-    # a retry after a transient failure is allowed and can succeed
+    # a blind retry after an ambiguous timeout is refused by the existing
+    # EXECUTING-status idempotency guard — no second Razorpay call is made
     razorpay_env["mode"] = "success"
+    retry = execute_action(db_session, action.id)
+    assert retry.outcome == "UNKNOWN"
+    assert len(razorpay_env["calls"]) == 1
+
+
+def test_adapter_definitive_failure_is_safely_retryable(db_session, razorpay_env):
+    """A definitive (non-ambiguous) Razorpay failure is still FAILED and can
+    be retried directly — only a TIMEOUT requires verification first."""
+    razorpay_env["status"] = 500
+    razorpay_env["body"] = {"error": {"description": "server blew up"}}
+    case = _analyzed_case(db_session, upi_timeout_payload())
+    action = _proposed_action(db_session, case)
+    result = execute_action(db_session, action.id)
+    assert result.status == "FAILED"
+    assert result.error_code == "RAZORPAY_API_ERROR"
+    razorpay_env["status"] = 200
+    razorpay_env["body"] = None
     retry = execute_action(db_session, action.id)
     assert retry.status == "EXECUTED"
 
@@ -370,79 +464,266 @@ def test_payment_link_created_is_not_revenue_recovered(client, razorpay_env):
     assert client.get(f"/api/v1/recovery-cases/{cn}").json()["status"] == "DETECTED"
 
 
-def test_payment_link_paid_webhook_verifies_recovery(client, razorpay_env):
+def test_signed_webhook_full_payment_verifies_recovery(client, razorpay_env, webhook_env, make_signature):
     cn = _api_analyzed_case(client)
     action = _api_propose(client, cn)
     executed = _api_execute(client, action["id"])
     assert executed["ui_state"] == "WAITING_FOR_PAYMENT"
 
-    paid = client.post("/api/v1/simulator/payment-link-paid", json={"action_id": action["id"]})
-    assert paid.status_code == 201
+    res = signed_payment_link_webhook(
+        client, make_signature, plink_id=executed["provider_action_id"],
+        ref=executed["reference_id"], event_id="evt_real_paid_1")
+    assert res.status_code == 200
 
     a = client.get(f"/api/v1/actions/{action['id']}").json()
     assert a["outcome"] == "RECOVERED"
     assert a["ui_state"] == "RECOVERED"
+    assert a["simulated"] is False
     assert Decimal(a["recovered_amount"]) == Decimal("4999.00")
 
     case = client.get(f"/api/v1/recovery-cases/{cn}").json()
     assert case["status"] == "RESOLVED"
     assert Decimal(case["amount_recovered"]) == Decimal("4999.00")
 
-    dash = client.get("/api/v1/dashboard/metrics").json()
-    assert Decimal(dash["actions"]["revenue_recovered"]) == Decimal("4999.00")
-    assert dash["actions"]["recovery_rate"] == 1.0
+    dash = client.get("/api/v1/dashboard/metrics").json()["actions"]
+    assert Decimal(dash["revenue_recovered"]) == Decimal("4999.00")
+    assert Decimal(dash["simulated_revenue_recovered"]) == Decimal("0.00")
+    assert dash["recovery_rate"] == 1.0
 
 
-def test_duplicate_payment_link_paid_does_not_double_count(client, razorpay_env):
-    cn = _api_analyzed_case(client)
-    action = _api_propose(client, cn)
-    _api_execute(client, action["id"])
-    client.post("/api/v1/simulator/payment-link-paid", json={"action_id": action["id"]})
-    client.post("/api/v1/simulator/payment-link-paid", json={"action_id": action["id"]})
-    client.post("/api/v1/simulator/payment-link-paid", json={"action_id": action["id"]})
-    dash = client.get("/api/v1/dashboard/metrics").json()
-    assert Decimal(dash["actions"]["revenue_recovered"]) == Decimal("4999.00")
-    audits = client.get("/api/v1/audit-logs?limit=100").json()["items"]
-    assert any(a["action"] == "RECOVERY_ALREADY_VERIFIED" for a in audits)
-
-
-def test_payment_link_paid_via_signed_webhook_endpoint(client, monkeypatch, webhook_secret, make_signature, razorpay_env):
-    monkeypatch.setattr(settings, "RAZORPAY_WEBHOOK_SECRET", webhook_secret)
+def test_duplicate_signed_webhook_does_not_double_count(client, razorpay_env, webhook_env, make_signature):
     cn = _api_analyzed_case(client)
     action = _api_propose(client, cn)
     executed = _api_execute(client, action["id"])
-    plink_id = executed["provider_action_id"]
-    ref = executed["reference_id"]
+    p, r = executed["provider_action_id"], executed["reference_id"]
 
-    body = {
-        "entity": "event", "event": "payment_link.paid", "contains": ["payment_link", "payment"],
-        "id": "evt_signed_plink_1",
-        "payload": {
-            "payment_link": {"entity": {
-                "id": plink_id, "reference_id": ref, "amount": 499900, "amount_paid": 499900,
-                "currency": "INR", "status": "paid", "created_at": 1620000000}},
-            "payment": {"entity": {
-                "id": "pay_signed_1", "amount": 499900, "currency": "INR", "status": "captured",
-                "method": "upi", "created_at": 1620000000}},
-        },
-        "created_at": 1620000000,
-    }
-    raw = json.dumps(body).encode()
-    res = client.post("/api/v1/webhooks/razorpay", content=raw,
-                      headers={"Content-Type": "application/json",
-                               "X-Razorpay-Signature": make_signature(raw)})
+    r1 = signed_payment_link_webhook(client, make_signature, plink_id=p, ref=r, event_id="evt_dup_1")
+    r2 = signed_payment_link_webhook(client, make_signature, plink_id=p, ref=r, event_id="evt_dup_1")  # same id
+    r3 = signed_payment_link_webhook(client, make_signature, plink_id=p, ref=r, event_id="evt_dup_2")  # diff id
+    assert r1.status_code == r2.status_code == r3.status_code == 200
+
+    dash = client.get("/api/v1/dashboard/metrics").json()["actions"]
+    assert Decimal(dash["revenue_recovered"]) == Decimal("4999.00")   # counted once
+    audits = client.get("/api/v1/audit-logs?limit=100").json()["items"]
+    assert sum(1 for a in audits if a["action"] == "RECOVERY_VERIFIED") == 1
+    assert any(a["action"] in ("RECOVERY_ALREADY_VERIFIED", "DUPLICATE_EVENT_IGNORED") for a in audits)
+
+
+def test_signed_webhook_partial_payment_is_not_recovered(client, razorpay_env, webhook_env, make_signature):
+    cn = _api_analyzed_case(client)
+    action = _api_propose(client, cn)
+    executed = _api_execute(client, action["id"])
+
+    res = signed_payment_link_webhook(
+        client, make_signature, plink_id=executed["provider_action_id"],
+        ref=executed["reference_id"], event_id="evt_partial_1",
+        amount=499900, amount_paid=200000, plink_status="partially_paid")
+    assert res.status_code == 200
+
+    a = client.get(f"/api/v1/actions/{action['id']}").json()
+    assert a["outcome"] == "PARTIAL"
+    assert a["ui_state"] == "PARTIAL"
+    assert Decimal(a["recovered_amount"]) == Decimal("0.00")   # PARTIAL is NOT recovered
+
+    case = client.get(f"/api/v1/recovery-cases/{cn}").json()
+    assert case["status"] != "RESOLVED"          # case NOT resolved
+
+    dash = client.get("/api/v1/dashboard/metrics").json()["actions"]
+    assert Decimal(dash["revenue_recovered"]) == Decimal("0.00")
+    assert dash["partial_recoveries"] == 1
+
+
+def test_signed_webhook_currency_mismatch_is_rejected(client, razorpay_env, webhook_env, make_signature):
+    cn = _api_analyzed_case(client)
+    action = _api_propose(client, cn)
+    executed = _api_execute(client, action["id"])
+
+    res = signed_payment_link_webhook(
+        client, make_signature, plink_id=executed["provider_action_id"],
+        ref=executed["reference_id"], event_id="evt_curr_1", currency="USD")
+    assert res.status_code == 200
+
+    a = client.get(f"/api/v1/actions/{action['id']}").json()
+    assert a["outcome"] == "PENDING"    # not recovered
+    audits = client.get("/api/v1/audit-logs?limit=100").json()["items"]
+    assert any(a["action"] == "RECOVERY_REJECTED"
+               and (a.get("metadata_json") or {}).get("reason") == "CURRENCY_MISMATCH"
+               for a in audits)
+
+
+def test_signed_webhook_status_not_paid_is_ignored(client, razorpay_env, webhook_env, make_signature):
+    cn = _api_analyzed_case(client)
+    action = _api_propose(client, cn)
+    executed = _api_execute(client, action["id"])
+    res = signed_payment_link_webhook(
+        client, make_signature, plink_id=executed["provider_action_id"],
+        ref=executed["reference_id"], event_id="evt_created_1", plink_status="created")
+    assert res.status_code == 200
+    assert client.get(f"/api/v1/actions/{action['id']}").json()["outcome"] == "PENDING"
+
+
+def test_signed_webhook_expired_marks_action_expired(client, razorpay_env, webhook_env, make_signature):
+    cn = _api_analyzed_case(client)
+    action = _api_propose(client, cn)
+    executed = _api_execute(client, action["id"])
+    res = signed_payment_link_webhook(
+        client, make_signature, plink_id=executed["provider_action_id"],
+        ref=executed["reference_id"], event_id="evt_expired_1",
+        event="payment_link.expired", plink_status="expired")
     assert res.status_code == 200
     a = client.get(f"/api/v1/actions/{action['id']}").json()
-    assert a["outcome"] == "RECOVERED"
+    assert a["outcome"] == "EXPIRED"
+    assert client.get(f"/api/v1/recovery-cases/{cn}").json()["status"] != "RESOLVED"
 
 
-def test_invalid_webhook_signature_still_blocked_phase3(client, monkeypatch, webhook_secret):
-    monkeypatch.setattr(settings, "RAZORPAY_WEBHOOK_SECRET", webhook_secret)
+def test_unsigned_payment_link_webhook_rejected(client, razorpay_env, webhook_env):
+    cn = _api_analyzed_case(client)
+    action = _api_propose(client, cn)
+    executed = _api_execute(client, action["id"])
+    body = json.dumps({
+        "event": "payment_link.paid", "id": "evt_unsigned_1",
+        "payload": {"payment_link": {"entity": {
+            "id": executed["provider_action_id"], "reference_id": executed["reference_id"],
+            "amount": 499900, "amount_paid": 499900, "currency": "INR", "status": "paid"}}},
+    }).encode()
+    res = client.post("/api/v1/webhooks/razorpay", content=body,
+                      headers={"Content-Type": "application/json"})  # no signature
+    assert res.status_code == 400
+    assert client.get(f"/api/v1/actions/{action['id']}").json()["outcome"] == "PENDING"
+
+
+def test_invalid_webhook_signature_still_blocked_phase3(client, webhook_env):
     body = json.dumps({"event": "payment_link.paid", "payload": {}}).encode()
     res = client.post("/api/v1/webhooks/razorpay", content=body,
                       headers={"Content-Type": "application/json",
                                "X-Razorpay-Signature": "deadbeef"})
     assert res.status_code == 400
+
+
+# ===========================================================================
+# Reconciliation (authoritative GET /v1/payment_links/{id})
+# ===========================================================================
+def test_reconcile_confirms_real_payment(client, razorpay_env):
+    cn = _api_analyzed_case(client)
+    action = _api_propose(client, cn)
+    _api_execute(client, action["id"])
+
+    # Razorpay now reports the link as paid in full
+    razorpay_env["link_status"] = "paid"
+    razorpay_env["link_amount_paid"] = 499900
+
+    res = client.post(f"/api/v1/actions/{action['id']}/reconcile").json()
+    assert res["ok"] is True and res["recovered"] is True
+    assert res["razorpay_status"] == "paid"
+    a = res["action"]
+    assert a["outcome"] == "RECOVERED" and a["simulated"] is False
+    assert Decimal(a["recovered_amount"]) == Decimal("4999.00")
+    assert client.get(f"/api/v1/recovery-cases/{cn}").json()["status"] == "RESOLVED"
+
+
+def test_reconcile_not_paid_stays_pending(client, razorpay_env):
+    cn = _api_analyzed_case(client)
+    action = _api_propose(client, cn)
+    _api_execute(client, action["id"])
+
+    razorpay_env["link_status"] = "created"       # customer has not paid
+    razorpay_env["link_amount_paid"] = 0
+
+    res = client.post(f"/api/v1/actions/{action['id']}/reconcile").json()
+    assert res["ok"] is False and res["recovered"] is False
+    assert client.get(f"/api/v1/actions/{action['id']}").json()["outcome"] == "PENDING"
+    assert client.get(f"/api/v1/recovery-cases/{cn}").json()["status"] == "DETECTED"
+
+
+def test_reconcile_partial_payment(client, razorpay_env):
+    cn = _api_analyzed_case(client)
+    action = _api_propose(client, cn)
+    _api_execute(client, action["id"])
+
+    razorpay_env["link_status"] = "partially_paid"
+    razorpay_env["link_amount_paid"] = 100000     # ₹1,000 of ₹4,999
+
+    res = client.post(f"/api/v1/actions/{action['id']}/reconcile").json()
+    assert res["partial"] is True and res["recovered"] is False
+    a = client.get(f"/api/v1/actions/{action['id']}").json()
+    assert a["outcome"] == "PARTIAL"
+    assert Decimal(a["recovered_amount"]) == Decimal("0.00")
+    assert client.get(f"/api/v1/recovery-cases/{cn}").json()["status"] != "RESOLVED"
+
+
+def test_reconcile_is_idempotent_with_webhook(client, razorpay_env, webhook_env, make_signature):
+    cn = _api_analyzed_case(client)
+    action = _api_propose(client, cn)
+    executed = _api_execute(client, action["id"])
+
+    # webhook confirms first
+    signed_payment_link_webhook(client, make_signature, plink_id=executed["provider_action_id"],
+                                ref=executed["reference_id"], event_id="evt_recon_idem_1")
+    # then a reconcile also runs
+    razorpay_env["link_status"] = "paid"
+    razorpay_env["link_amount_paid"] = 499900
+    client.post(f"/api/v1/actions/{action['id']}/reconcile")
+    client.post(f"/api/v1/actions/{action['id']}/reconcile")
+
+    dash = client.get("/api/v1/dashboard/metrics").json()["actions"]
+    assert Decimal(dash["revenue_recovered"]) == Decimal("4999.00")   # once only
+
+
+def test_reconcile_without_razorpay_credentials(client, monkeypatch):
+    monkeypatch.setattr(settings, "RAZORPAY_KEY_ID", "rzp_test_x")
+    monkeypatch.setattr(settings, "RAZORPAY_KEY_SECRET", "x")
+    monkeypatch.setattr(settings, "RAZORPAY_TEST_MODE", True)
+    cn = _api_analyzed_case(client)
+    action = _api_propose(client, cn)
+    # give the action a fake executed link so reconcile proceeds to the GET
+    from database import SessionLocal
+    db = SessionLocal()
+    try:
+        a = db.query(RecoveryAction).filter_by(id=uuid.UUID(action["id"])).first()
+        a.status = "EXECUTED"; a.provider_action_id = "plink_x"
+        db.commit()
+    finally:
+        db.close()
+    monkeypatch.setattr(settings, "RAZORPAY_KEY_ID", "")
+    monkeypatch.setattr(settings, "RAZORPAY_KEY_SECRET", "")
+    res = client.post(f"/api/v1/actions/{action['id']}/reconcile").json()
+    assert res["ok"] is False
+    assert "RAZORPAY_NOT_CONFIGURED" in res["message"]
+
+
+# ===========================================================================
+# Simulator gating + provenance
+# ===========================================================================
+def test_simulator_disabled_by_default(client, monkeypatch):
+    monkeypatch.setattr(settings, "RECON_SIMULATOR_ENABLED", False)
+    r1 = client.post("/api/v1/simulator/events", json={
+        "event_type": "payment.failed", "customer_name": "X", "customer_email": "x@y.z",
+        "amount": "4999.00", "payment_method": "upi"})
+    r2 = client.post("/api/v1/simulator/payment-link-paid", json={"action_id": str(uuid.uuid4())})
+    assert r1.status_code == 403
+    assert r2.status_code == 403
+
+
+def test_simulated_recovery_is_marked_and_excluded_from_real_metrics(client, razorpay_env):
+    cn = _api_analyzed_case(client)                       # simulator enabled via conftest
+    action = _api_propose(client, cn)
+    _api_execute(client, action["id"])
+
+    paid = client.post("/api/v1/simulator/payment-link-paid", json={"action_id": action["id"]})
+    assert paid.status_code == 201
+
+    a = client.get(f"/api/v1/actions/{action['id']}").json()
+    assert a["outcome"] == "RECOVERED"
+    assert a["simulated"] is True                         # technically marked
+
+    dash = client.get("/api/v1/dashboard/metrics").json()["actions"]
+    assert Decimal(dash["revenue_recovered"]) == Decimal("0.00")            # excluded from REAL
+    assert Decimal(dash["simulated_revenue_recovered"]) == Decimal("4999.00")
+
+    audits = client.get("/api/v1/audit-logs?limit=100").json()["items"]
+    verified = [x for x in audits if x["action"] == "RECOVERY_VERIFIED"]
+    assert verified and "SIMULATED" in verified[0]["detail"]
+    assert (verified[0].get("metadata_json") or {}).get("simulated") is True
 
 
 # ===========================================================================
@@ -537,7 +818,7 @@ def test_no_secret_in_audit_logs(client, razorpay_env):
     action = _api_propose(client, cn)
     _api_execute(client, action["id"])
     client.post("/api/v1/simulator/payment-link-paid", json={"action_id": action["id"]})
-    audits = client.get("/api/v1/audit-logs?limit=200").json()
+    audits = client.get("/api/v1/audit-logs?limit=100").json()
     assert FAKE_SECRET not in json.dumps(audits)
 
 

@@ -14,6 +14,34 @@ import { api } from "@/lib/api";
 import { AuditLog, PaginatedResponse } from "@/lib/types";
 import { formatDateTime } from "@/lib/utils";
 
+/**
+ * Filter option lists — every value here is an actual `actor`/`action`
+ * string the backend writes to `audit_logs` (see `audit_action()` call sites
+ * across apps/api/services/**). Not a live enum endpoint, so this must be
+ * kept in sync by hand when a new audit event type is introduced backend-side.
+ */
+const AUDIT_ACTIONS = [
+  "ACTION_APPROVAL_GRANTED", "ACTION_APPROVAL_HONORED", "ACTION_APPROVED",
+  "ACTION_BLOCKED", "ACTION_EXECUTED", "ACTION_EXECUTION_FAILED",
+  "ACTION_EXECUTION_STARTED", "ACTION_OUTCOME_UNKNOWN", "ACTION_POLICY_CHECKED",
+  "ACTION_PROPOSED", "ACTION_REJECTED_BY_HUMAN", "AI_DIAGNOSIS_COMPLETED",
+  "AI_DIAGNOSIS_FAILED", "AI_DIAGNOSIS_FALLBACK", "AI_DIAGNOSIS_STARTED",
+  "DIAGNOSIS_COMPLETED", "DUPLICATE_EVENT_IGNORED", "EVENT_PROCESSED",
+  "INTELLIGENCE_COMPLETED", "INTELLIGENCE_FAILED", "INTELLIGENCE_STARTED",
+  "PAYMENT_LINK_CREATED", "POLICY_EVALUATED", "PREDICTION_COMPLETED",
+  "RECONCILE_FAILED", "RECONCILE_STARTED", "RECONCILE_STATUS",
+  "RECOVERY_ALREADY_VERIFIED", "RECOVERY_CASE_CREATED", "RECOVERY_CASE_RESOLVED",
+  "RECOVERY_FAILED", "RECOVERY_PARTIAL", "RECOVERY_PENDING", "RECOVERY_REJECTED",
+  "RECOVERY_VERIFIED", "STRATEGY_COMPLETED", "UNKNOWN_RESOLVED_FAILED",
+  "UNKNOWN_RESOLVED_SUCCESS", "UNKNOWN_VERIFICATION_INCONCLUSIVE",
+  "UNKNOWN_VERIFICATION_STARTED",
+];
+const AUDIT_ACTORS = [
+  "ACTION_ENGINE", "DIAGNOSIS_AGENT", "HUMAN_OPERATOR", "POLICY_ENGINE",
+  "PREDICTION_AGENT", "RAZORPAY", "RAZORPAY_ADAPTER", "RECON_ENGINE",
+  "SIMULATOR", "STRATEGY_AGENT",
+];
+
 export default function AuditLogsPage() {
   const [page, setPage] = useState(1);
   const [actionFilter, setActionFilter] = useState<string>("");
@@ -79,10 +107,9 @@ export default function AuditLogsPage() {
             className="h-11 bg-surface-subtle border border-border rounded-lg px-3.5 text-sm text-fg-secondary focus:outline-none focus:border-accent font-mono"
           >
             <option value="">All Actions</option>
-            <option value="EVENT_PROCESSED">EVENT_PROCESSED</option>
-            <option value="RECOVERY_CASE_CREATED">RECOVERY_CASE_CREATED</option>
-            <option value="RECOVERY_CASE_RESOLVED">RECOVERY_CASE_RESOLVED</option>
-            <option value="DUPLICATE_EVENT_IGNORED">DUPLICATE_EVENT_IGNORED</option>
+            {AUDIT_ACTIONS.map((a) => (
+              <option key={a} value={a}>{a}</option>
+            ))}
           </select>
 
           {/* Actor Filter */}
@@ -95,9 +122,9 @@ export default function AuditLogsPage() {
             className="h-11 bg-surface-subtle border border-border rounded-lg px-3.5 text-sm text-fg-secondary focus:outline-none focus:border-accent font-mono"
           >
             <option value="">All Actors</option>
-            <option value="RAZORPAY">RAZORPAY</option>
-            <option value="SIMULATOR">SIMULATOR</option>
-            <option value="RECON_ENGINE">RECON_ENGINE</option>
+            {AUDIT_ACTORS.map((a) => (
+              <option key={a} value={a}>{a}</option>
+            ))}
           </select>
         </div>
       </div>

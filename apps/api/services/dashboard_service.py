@@ -14,6 +14,7 @@ from sqlalchemy import func, case, desc
 from sqlalchemy.orm import Session, joinedload
 
 from models.customer import Customer
+from models.merchant import Merchant
 from models.payment import Payment
 from models.revenue_event import RevenueEvent
 from models.recovery_case import RecoveryCase
@@ -30,6 +31,10 @@ def get_dashboard_metrics(db: Session, merchant_id: UUID) -> DashboardMetrics:
     """
     Computes all Command Center KPI metrics directly from database state.
     """
+    # 0. Merchant identity (real record — never a hardcoded display name)
+    merchant = db.query(Merchant).filter(Merchant.id == merchant_id).first()
+    merchant_name = merchant.name if merchant else ""
+
     # 1. Revenue at risk (sum of active recovery cases)
     revenue_at_risk_query = db.query(
         func.coalesce(func.sum(RecoveryCase.amount_at_risk), Decimal("0.00"))
@@ -177,28 +182,43 @@ def get_dashboard_metrics(db: Session, merchant_id: UUID) -> DashboardMetrics:
         RecoveryAction.merchant_id == merchant_id
     ).all()
 
+    from config import settings as _settings
+
     action_metrics = None
     if action_rows:
         executed = [a for a in action_rows if a.status == "EXECUTED"]
         recovered = [a for a in action_rows if (a.outcome or "") == "RECOVERED"]
+        real_recovered = [a for a in recovered if not a.simulated]
+        sim_recovered = [a for a in recovered if a.simulated]
+        # revenue_recovered = REAL recoveries only. Simulated ones are reported separately.
         revenue_recovered = sum(
-            (Decimal(a.recovered_amount or 0) for a in recovered), Decimal("0.00")
+            (Decimal(a.recovered_amount or 0) for a in real_recovered), Decimal("0.00")
+        )
+        simulated_revenue_recovered = sum(
+            (Decimal(a.recovered_amount or 0) for a in sim_recovered), Decimal("0.00")
         )
         pending = [a for a in executed if (a.outcome or "") == "PENDING"]
-        recovery_rate = (len(recovered) / len(executed)) if executed else 0.0
+        partial = [a for a in action_rows if (a.outcome or "") == "PARTIAL"]
+        unknown = [a for a in action_rows if (a.outcome or "") == "UNKNOWN"]
+        recovery_rate = (len(real_recovered) / len(executed)) if executed else 0.0
         action_metrics = ActionMetrics(
             actions_proposed=sum(1 for a in action_rows if a.status == "PROPOSED"),
             actions_executed=len(executed),
             actions_blocked=sum(1 for a in action_rows if a.status == "BLOCKED"),
             payment_links_created=sum(1 for a in action_rows if a.provider_action_id),
             pending_recoveries=len(pending),
+            partial_recoveries=len(partial),
+            unknown_outcomes=len(unknown),
             revenue_recovered=revenue_recovered,
+            simulated_revenue_recovered=simulated_revenue_recovered,
             recovery_rate=round(recovery_rate, 4),
             test_mode=bool(adapter.test_mode),
             razorpay_configured=adapter.is_configured(),
+            simulator_enabled=bool(_settings.RECON_SIMULATOR_ENABLED),
         )
 
     return DashboardMetrics(
+        merchant_name=merchant_name,
         revenue_at_risk=revenue_at_risk,
         revenue_secured=revenue_secured,
         active_recovery_cases=active_recovery_cases,

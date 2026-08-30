@@ -72,6 +72,12 @@ def _run_lightweight_migrations():
             "provider_version": "VARCHAR(60)",
             "intelligence_version": "VARCHAR(20)",
         },
+        "recovery_actions": {
+            "simulated": "BOOLEAN NOT NULL DEFAULT 0",
+            "human_decision": "VARCHAR(20)",
+            "human_decided_at": "TIMESTAMP",
+            "human_decided_by": "VARCHAR(60)",
+        },
     }
 
     for table, columns in wanted.items():

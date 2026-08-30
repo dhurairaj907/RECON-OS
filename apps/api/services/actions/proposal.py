@@ -13,6 +13,7 @@ from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
+from config import settings
 from integrations.razorpay.adapter import get_razorpay_adapter
 from models.case_intelligence import CaseIntelligence
 from models.recovery_action import RecoveryAction
@@ -49,6 +50,7 @@ def build_proposal(db: Session, case: RecoveryCase) -> ActionProposal:
         amount=amount,
         test_mode=bool(adapter.test_mode),
         razorpay_configured=adapter.is_configured(),
+        simulator_enabled=bool(settings.RECON_SIMULATOR_ENABLED),
     )
 
     ci = _latest_intelligence(db, case.id)

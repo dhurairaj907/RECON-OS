@@ -210,8 +210,14 @@ def process_inbound_event(
 
         # 6a. Phase 3 (ACT) — Payment Link recovery verification.
         # MUST be checked before the generic "captured" branch: a payment_link.paid
-        # event also carries a nested captured payment entity.
-        if event_type == "payment_link.paid" or normalized.get("payment_link_status") == "paid":
+        # event also carries a nested captured payment entity. Handles paid /
+        # expired / cancelled. Runs only AFTER signature verification (webhook)
+        # or the explicit simulator path.
+        _is_payment_link_event = (
+            str(event_type).startswith("payment_link.")
+            or normalized.get("payment_link_status") is not None
+        )
+        if _is_payment_link_event:
             try:
                 from services.actions.verification import verify_payment_link_recovery
                 matched = verify_payment_link_recovery(
@@ -223,7 +229,7 @@ def process_inbound_event(
                     ).first()
             except Exception:
                 logger.exception(
-                    "payment_link.paid verification failed (non-fatal for Phase 1)"
+                    "payment_link event verification failed (non-fatal for Phase 1)"
                 )
 
         elif event_type == "payment.failed" or status == "failed":

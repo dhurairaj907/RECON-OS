@@ -225,6 +225,7 @@ export type ActionUiState =
   | "NEEDS_APPROVAL"
   | "EXPIRED"
   | "CANCELLED"
+  | "UNKNOWN"
   | string;
 
 export interface RecoveryAction {
@@ -256,6 +257,9 @@ export interface RecoveryAction {
   completed_at?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
+  human_decision?: string | null;
+  human_decided_at?: string | null;
+  human_decided_by?: string | null;
 }
 
 export interface ProposeActionResponse {
@@ -286,6 +290,7 @@ export interface ActionMetrics {
   payment_links_created: number;
   pending_recoveries: number;
   partial_recoveries: number;
+  unknown_outcomes: number;
   revenue_recovered: string;
   simulated_revenue_recovered: string;
   recovery_rate: number;
@@ -334,6 +339,7 @@ export interface DailyTrendItem {
 }
 
 export interface DashboardMetrics {
+  merchant_name: string;
   revenue_at_risk: string;
   revenue_secured: string;
   active_recovery_cases: number;
@@ -376,4 +382,73 @@ export interface SimulateEventResponse {
   processing_status: string;
   case_number?: string | null;
   message: string;
+}
+
+/* ------------------------------------------------------------------ */
+/* Phase 4 (PROVE) — Analytics                                         */
+/* ------------------------------------------------------------------ */
+
+export interface StrategyPerformance {
+  strategy: string;
+  executed: number;
+  recovered: number;
+  success_rate: number;
+}
+
+export interface AnalyticsMetrics {
+  generated_at: string;
+
+  revenue_at_risk: string;
+  potential_recoverable_revenue: string;
+  revenue_recovered: string;
+  simulated_revenue_recovered: string;
+  recovery_rate: number;
+  average_recovery_probability?: number | null;
+
+  automation_rate?: number | null;
+  human_approval_rate?: number | null;
+  human_rejection_rate?: number | null;
+  actions_needing_approval_total: number;
+  actions_approved_by_human: number;
+  actions_rejected_by_human: number;
+
+  recovery_failure_rate?: number | null;
+  unknown_cases: number;
+  policy_rejection_count: number;
+
+  average_recovery_time_hours?: number | null;
+  average_recovery_attempts: number;
+  total_recovery_attempts: number;
+
+  strategy_performance: StrategyPerformance[];
+
+  cases_analyzed: number;
+  actions_total: number;
+}
+
+/* ------------------------------------------------------------------ */
+/* Phase 4 (PROVE) — Policies                                          */
+/* ------------------------------------------------------------------ */
+
+export interface PolicyRuleInfo {
+  rule_id: string;
+  name: string;
+  condition: string;
+  decision: string;
+  action_restriction: string;
+}
+
+export interface PolicyConfig {
+  max_recovery_attempts: number;
+  contact_window_hours: number;
+  max_contacts_per_window: number;
+  auto_approval_amount_limit: number;
+  currency: string;
+}
+
+export interface PolicyOverview {
+  config: PolicyConfig;
+  rules: PolicyRuleInfo[];
+  editable: boolean;
+  note: string;
 }

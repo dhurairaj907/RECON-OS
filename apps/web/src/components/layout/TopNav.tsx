@@ -16,7 +16,10 @@ const NAV_ITEMS = [
   { name: "Live Events", href: "/events" },
   { name: "Recovery", href: "/recovery" },
   { name: "Intelligence", href: "/intelligence" },
+  { name: "Approvals", href: "/approvals" },
   { name: "Customers", href: "/customers" },
+  { name: "Analytics", href: "/analytics" },
+  { name: "Policies", href: "/policies" },
   { name: "Simulator", href: "/simulator" },
   { name: "Audit Trail", href: "/audit-logs" },
 ] as const;
@@ -24,7 +27,7 @@ const NAV_ITEMS = [
 /** Routes that carry a real-data attention dot. Every value below is derived
  * from the same DashboardMetrics payload every list page already polls —
  * no new endpoint, no fabricated state. */
-const STATUS_ROUTES = ["/events", "/recovery", "/intelligence"] as const;
+const STATUS_ROUTES = ["/events", "/recovery", "/approvals"] as const;
 
 interface TopNavProps {
   onRefresh?: () => void;
@@ -85,7 +88,7 @@ export function TopNav({ onRefresh, isRefreshing, onMenuClick, transparentOverHe
     "/recovery": metrics
       ? { show: anyActiveCase, tone: criticalCases >= 3 ? "bg-status-danger" : criticalCases > 0 ? "bg-status-warning" : "bg-status-info" }
       : undefined,
-    "/intelligence": metrics ? { show: needsApproval > 0, tone: "bg-status-warning" } : undefined,
+    "/approvals": metrics ? { show: needsApproval > 0, tone: "bg-status-warning" } : undefined,
   };
 
   const testMode = metrics?.actions?.test_mode;
@@ -117,7 +120,7 @@ export function TopNav({ onRefresh, isRefreshing, onMenuClick, transparentOverHe
           </span>
         </Link>
 
-        <nav className="hidden flex-1 items-center justify-center gap-1 lg:flex">
+        <nav className="no-scrollbar hidden min-w-0 flex-1 items-center gap-0.5 overflow-x-auto lg:flex xl:justify-center xl:gap-1">
           {NAV_ITEMS.map((item) => {
             const isActive = pathname === item.href;
             const dot = (dotFor as Record<string, { show: boolean; tone: string; pulse?: boolean } | undefined>)[item.href];
@@ -127,7 +130,7 @@ export function TopNav({ onRefresh, isRefreshing, onMenuClick, transparentOverHe
                 href={item.href}
                 aria-current={isActive ? "page" : undefined}
                 className={cn(
-                  "relative flex items-center gap-1.5 whitespace-nowrap rounded-full px-3 py-2 text-sm font-medium transition-colors",
+                  "relative flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-2 text-sm font-medium transition-colors xl:px-3",
                   isActive ? "bg-accent/10 font-semibold text-fg" : "text-fg-muted hover:text-fg"
                 )}
               >
@@ -178,7 +181,7 @@ export function TopNav({ onRefresh, isRefreshing, onMenuClick, transparentOverHe
 
           <div
             className="hidden h-10 items-center gap-1.5 rounded-lg border border-border bg-surface-subtle px-3.5 md:flex"
-            title="System status — Events / Recovery / Intelligence"
+            title="System status — Events / Recovery / Approvals"
           >
             {STATUS_ROUTES.map((route) => {
               const d = dotFor[route];
@@ -193,10 +196,12 @@ export function TopNav({ onRefresh, isRefreshing, onMenuClick, transparentOverHe
 
           <ThemeToggle />
 
-          <div className="hidden h-10 items-center gap-1.5 rounded-lg border border-border bg-surface-subtle px-3.5 font-mono text-xs text-fg-muted 2xl:flex">
-            <span className="truncate">RECON Demo Merchant</span>
-            {testMode && <span className="text-status-warning">· TEST MODE</span>}
-          </div>
+          {metrics?.merchant_name && (
+            <div className="hidden h-10 items-center gap-1.5 rounded-lg border border-border bg-surface-subtle px-3.5 font-mono text-xs text-fg-muted 2xl:flex">
+              <span className="truncate">{metrics.merchant_name}</span>
+              {testMode && <span className="text-status-warning">· TEST MODE</span>}
+            </div>
+          )}
         </div>
       </header>
 

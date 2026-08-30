@@ -40,7 +40,8 @@ class ActionStatus(str, Enum):
 
 class RecoveryOutcome(str, Enum):
     PENDING = "PENDING"           # action executed, awaiting real payment
-    RECOVERED = "RECOVERED"       # webhook confirmed payment
+    RECOVERED = "RECOVERED"       # Razorpay confirms payment_link.status == "paid", full amount
+    PARTIAL = "PARTIAL"          # amount_paid < expected — NOT recovered, case NOT resolved
     FAILED = "FAILED"
     EXPIRED = "EXPIRED"
     CANCELLED = "CANCELLED"
@@ -59,6 +60,7 @@ class ActionBlockedReason(str, Enum):
     INVALID_AMOUNT = "INVALID_AMOUNT"
     INVALID_CURRENCY = "INVALID_CURRENCY"
     PROVIDER_ERROR = "PROVIDER_ERROR"
+    HUMAN_REJECTED = "HUMAN_REJECTED"
 
 
 # ---------------------------------------------------------------------------
@@ -79,6 +81,7 @@ class ActionProposal(BaseModel):
     not_proposable_reason: Optional[str] = None
     test_mode: bool = True
     razorpay_configured: bool = False
+    simulator_enabled: bool = False            # is the (non-real) simulator switched on?
 
 
 # ---------------------------------------------------------------------------
@@ -104,6 +107,8 @@ class ActionResponse(BaseModel):
     amount: Optional[Decimal] = None
     currency: str = "INR"
     recovered_amount: Decimal = Decimal("0.00")
+    simulated: bool = False                     # outcome set by the simulator, not a real payment
+    simulator_enabled: bool = False
 
     strategy_action: Optional[str] = None
     policy_verdict: Optional[str] = None
@@ -118,6 +123,12 @@ class ActionResponse(BaseModel):
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
+    # Human approval (Phase 4) — distinct from `approved_at` (automatic policy
+    # approval). Present only once a human has actually recorded a decision.
+    human_decision: Optional[str] = None        # APPROVED | REJECTED
+    human_decided_at: Optional[datetime] = None
+    human_decided_by: Optional[str] = None
+
 
 class ActionListResponse(BaseModel):
     items: List[ActionResponse] = []
@@ -126,6 +137,16 @@ class ActionListResponse(BaseModel):
 
 class ExecuteActionResponse(BaseModel):
     ok: bool
+    message: str
+    action: ActionResponse
+
+
+class ReconcileActionResponse(BaseModel):
+    ok: bool                                   # True only when the action is now RECOVERED
+    recovered: bool
+    partial: bool
+    razorpay_status: Optional[str] = None      # authoritative payment_link.status from Razorpay
+    amount_paid: Optional[Decimal] = None
     message: str
     action: ActionResponse
 
@@ -139,7 +160,11 @@ class ActionMetrics(BaseModel):
     actions_blocked: int = 0
     payment_links_created: int = 0
     pending_recoveries: int = 0
-    revenue_recovered: Decimal = Decimal("0.00")
-    recovery_rate: float = 0.0            # recovered / executed
+    partial_recoveries: int = 0
+    unknown_outcomes: int = 0            # awaiting verification — never auto-retried
+    revenue_recovered: Decimal = Decimal("0.00")       # REAL recoveries only
+    simulated_revenue_recovered: Decimal = Decimal("0.00")
+    recovery_rate: float = 0.0            # real recovered / executed
     test_mode: bool = True
     razorpay_configured: bool = False
+    simulator_enabled: bool = False

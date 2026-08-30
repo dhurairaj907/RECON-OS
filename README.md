@@ -1,6 +1,6 @@
 # RECON OS — Revenue Recovery and Optimization Network
 
-[![Phase](https://img.shields.io/badge/Phase-2%20%28THINK%29-blue.svg)](https://github.com/recon-os)
+[![Phase](https://img.shields.io/badge/Phase-4%20%28PROVE%29-blue.svg)](https://github.com/recon-os)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115%2B-teal.svg)](https://fastapi.tiangolo.com)
@@ -84,7 +84,8 @@ Phase 1 establishes the rock-solid **Data Plane** foundation:
 - **Frontend**: Next.js 14 (App Router), TypeScript, Tailwind CSS, Lucide Icons, SWR polling.
 - **Backend**: Python 3.11+, FastAPI, SQLAlchemy 2.0, Pydantic v2.
 - **Database**: PostgreSQL 16 (UUID primary keys, JSONB raw payloads, indexes).
-- **Testing**: `pytest` with SQLite in-memory fixtures (10/10 automated tests).
+- **Testing**: `pytest` with SQLite in-memory fixtures (147 automated tests) plus a
+  standalone 25-scenario evaluation harness (`apps/api/evaluation/`).
 - **Containerization**: Docker & Docker Compose.
 
 ---
@@ -153,7 +154,7 @@ Visit **`http://localhost:3000`** in your browser.
 
 ## 6. Running Automated Tests
 
-Run the full pytest suite (100% pass rate):
+Run the full pytest suite (147 tests, 100% pass rate):
 
 ```bash
 python -m pytest tests/ -v
@@ -164,6 +165,16 @@ Test Coverage Highlights:
 - **Idempotency**: Duplicate webhook delivery guarantees zero duplicate cases.
 - **Event Processor**: Payment failure recovery case creation, out-of-order webhook protection, case auto-resolution upon payment capture.
 - **API Endpoints**: Dashboard metrics aggregation, simulator trigger, pagination, customer ledgers.
+- **Phase 4 safety** (`tests/test_phase4_safety.py`): human approval idempotency/
+  rejection/staleness/audit, UNKNOWN timeout/no-blind-retry/never-bypasses-policy/
+  resolution, plus 3 full end-to-end chains.
+- **Security** (`tests/test_security.py`): API key gate, per-IP rate limiting.
+
+Then run the deterministic evaluation harness against the real pipeline (see §10.6):
+
+```bash
+cd apps/api && python -m evaluation.runner
+```
 
 ---
 
@@ -201,6 +212,18 @@ Test Coverage Highlights:
 | `GET` | `/api/v1/recovery-cases/{id}/intelligence` | Latest Phase 2 intelligence result for a case |
 | `POST` | `/api/v1/recovery-cases/{id}/intelligence:analyze` | Run the deterministic intelligence pipeline (safe to repeat) |
 | `GET` | `/api/v1/intelligence` | List analysed recovery cases (latest analysis per case) |
+| `POST` | `/api/v1/recovery-cases/{id}/actions/propose` | Build/return a policy-gated action proposal (protected*) |
+| `POST` | `/api/v1/actions/{id}/execute` | Execute an action — re-validates policy server-side (protected*) |
+| `POST` | `/api/v1/actions/{id}/approve` | Human approval — re-validates, then executes (protected*) |
+| `POST` | `/api/v1/actions/{id}/reject` | Human rejection — terminal, never executes (protected*) |
+| `POST` | `/api/v1/actions/{id}/verify-unknown` | Resolve an UNKNOWN outcome — never a blind retry (protected*) |
+| `POST` | `/api/v1/actions/{id}/reconcile` | Ask Razorpay directly whether a Payment Link was paid (protected*) |
+| `GET` | `/api/v1/actions` / `/api/v1/actions/{id}` | Action history / single action status |
+| `GET` | `/api/v1/analytics` | Real-data revenue recovery + operational analytics |
+| `GET` | `/api/v1/policies` | Read-only description of the live Policy Engine + thresholds |
+
+\* protected by `RECON_API_KEY` (open by default for local dev — see §10.3) and a
+per-IP rate limit.
 
 Interactive Swagger documentation is available at `http://localhost:8000/docs`.
 
@@ -268,15 +291,153 @@ Strategy → Policy → ActionProposal → Action Executor → Razorpay Adapter 
   required. Missing credentials return `RAZORPAY_NOT_CONFIGURED` — the app never crashes.
 - **Idempotent:** unique `idempotency_key` + `reference_id` (`RECON-RC10001-ACT001`);
   a Payment Link is never created twice.
-- **Creating a Payment Link is NOT revenue recovered.** The action is `EXECUTED /
-  outcome PENDING` until a `payment_link.paid` webhook is verified → `RECOVERED`,
-  the case is RESOLVED, and `amount_recovered` is set. Duplicate webhooks never
-  double-count.
+- **Creating a Payment Link is NOT revenue recovered.** The action stays `EXECUTED /
+  outcome PENDING` until Razorpay itself confirms payment, via **one** of:
+  1. a **signature-verified** `payment_link.paid` webhook, or
+  2. `POST /api/v1/actions/{id}/reconcile` — RECON calls `GET /v1/payment_links/{id}`
+     and marks `RECOVERED` **only if Razorpay reports `status == "paid"` in full**.
+  Then the case is RESOLVED and `amount_recovered` is set. A short payment →
+  `PARTIAL` (case NOT resolved). Duplicate webhooks/reconciles never double-count.
+- **Webhooks fail closed:** rejected unless signed against `RAZORPAY_WEBHOOK_SECRET`
+  (`RAZORPAY_ALLOW_UNSIGNED_WEBHOOKS=true` opts in for local dev only). `apply_recovery`
+  validates action-state, currency match, and full amount before RECOVERED.
 - Audit lifecycle: `ACTION_PROPOSED → ACTION_EXECUTION_STARTED → ACTION_POLICY_CHECKED
   → ACTION_APPROVED / ACTION_BLOCKED → PAYMENT_LINK_CREATED → ACTION_EXECUTED →
-  RECOVERY_PENDING → RECOVERY_VERIFIED` (or `ACTION_EXECUTION_FAILED` / `RECOVERY_FAILED`).
-- Demo: `POST /api/v1/simulator/payment-link-paid` simulates the confirming webhook so
-  the loop completes without a real Test Mode payment.
+  RECOVERY_PENDING → (RECONCILE_STARTED/STATUS) → RECOVERY_VERIFIED` (or
+  `RECOVERY_PARTIAL` / `RECOVERY_REJECTED` / `RECOVERY_FAILED` / `RECOVERY_ALREADY_VERIFIED`).
+- **Simulator is off by default** (`RECON_SIMULATOR_ENABLED=false` → `/api/v1/simulator/*`
+  return 403). It is NOT part of the real recovery path. When enabled, every record and
+  audit entry it produces is stamped `simulated=true` and its "recovered" amount is
+  excluded from real `revenue_recovered` (reported as `simulated_revenue_recovered`).
 
 **Not in Phase 3:** live mode, refunds, payouts, card retries / direct capture of failed
-payments, SMS/email providers, a full human-approval workflow, or any Phase 4 learning.
+payments, or SMS/email providers. The human-approval workflow and UNKNOWN-outcome safety
+net mentioned above as gaps are now implemented — see Phase 4 below.
+
+---
+
+## 10. Phase 4 (PROVE) — Human Approval, UNKNOWN Safety, Analytics, Evaluation, Security
+
+Phase 4 closes the two safety gaps Phase 3 left open, then proves the whole system
+actually works with a real evaluation harness and honest, real-data analytics —
+without touching the architecture: **LLM → Policy Engine → Action Engine → Razorpay
+Adapter → Razorpay**. The LLM still never talks to Razorpay directly, and a human
+decision never bypasses the Policy Engine — it only unlocks proceeding when a *fresh*
+re-evaluation still allows it.
+
+### 10.1 Human Approval Workflow
+
+```
+NEEDS_APPROVAL → POST /actions/{id}/approve → re-derive case/diagnosis/prediction/
+strategy → RE-EVALUATE Policy Engine → still NEEDS_APPROVAL? honour the decision :
+now REJECTED? clear the decision and block anyway → Action Engine → Razorpay → Audit
+```
+
+- `POST /api/v1/actions/{id}/approve` and `POST /api/v1/actions/{id}/reject` —
+  `approve` records the decision then calls the **same** `execute_action()` used for
+  every other execution; it never sets `EXECUTED` directly. `reject` is terminal.
+- A `REJECTED` policy verdict is checked **before** any human decision is consulted
+  and always wins — a stale `APPROVED` decision is cleared, not honoured, the moment
+  policy re-evaluates to `REJECTED` (e.g. attempts exhausted or payment state changed
+  since the decision was made).
+- New fields on `RecoveryAction`: `human_decision` / `human_decided_at` /
+  `human_decided_by` — distinct from `approved_at` (automatic policy approval).
+- Dedicated **Approvals** page (`/approvals`) — a queue of cases whose *current* action
+  is blocked on `NEEDS_APPROVAL` (not a stale analysis-time snapshot), each opening the
+  real case drawer with the actual Approve/Reject controls.
+
+### 10.2 UNKNOWN Payment State / Timeout Safety
+
+```
+Action → Razorpay create times out → outcome=UNKNOWN, status stays EXECUTING
+       → existing EXECUTING-idempotency guard refuses any blind retry
+       → POST /actions/{id}/verify-unknown → adapter searches Razorpay's own
+         recent Payment Links for our reference_id
+       → FOUND: adopt as EXECUTED/PENDING (no duplicate)
+       → CONFIRMED absent: mark FAILED (now a verified fact — a retry is policy-gated, not blind)
+       → inconclusive: stays UNKNOWN, never guessed
+```
+
+- A `RAZORPAY_TIMEOUT` on create is the ONLY thing that produces `outcome=UNKNOWN` —
+  every other failure (4xx/5xx/rate-limited) is a definitive `FAILED` and safely
+  retryable immediately.
+- Resolution never bypasses policy: once resolved to `FAILED`, a retry still goes
+  through the full `execute_action()` re-evaluation.
+- Frontend renders `UNKNOWN` as a distinct amber state (never the same as red
+  `FAILED`) with a **"Verify with Razorpay"** action — there is no retry button while
+  an action is `UNKNOWN`.
+
+### 10.3 Minimal Security Hardening
+
+RECON OS has one seeded demo merchant and no user accounts — a full identity platform
+would be scope well beyond the product. Instead:
+
+- **API key** (`RECON_API_KEY`, unset/open by default for local dev) gates every
+  action-mutating endpoint (propose / execute / approve / reject / verify-unknown /
+  reconcile) via the `X-RECON-API-KEY` header. Set it before exposing the API beyond
+  localhost — a startup log warns when it's unset.
+- **Per-IP rate limiting** (`RECON_RATE_LIMIT_PER_MINUTE`, default 30/min) on the same
+  endpoints — in-memory, single-process by design; a multi-instance deployment would
+  need a shared store instead.
+- Baseline response headers (`X-Content-Type-Options`, `X-Frame-Options`,
+  `Referrer-Policy`) on every response.
+- Webhook signature verification, secret handling, and idempotency are unchanged from
+  Phase 3 (already fail-closed) — see `security.py` and `tests/test_security.py`.
+
+### 10.4 Revenue Recovery Analytics
+
+`GET /api/v1/analytics` (`services/analytics_service.py`) computes, live, from the
+same `RecoveryCase` / `RecoveryAction` / `CaseIntelligence` rows every other page
+reads — no new tracking tables, no fabricated numbers, and a metric with no honest
+basis in current data (e.g. no recoveries yet) is `null`, never a fake zero:
+
+revenue at risk, potential recoverable revenue (excludes policy-rejected dead ends),
+revenue recovered, recovery rate, average recovery probability, automation rate,
+human approval/rejection rate, recovery failure rate, UNKNOWN case count, policy
+rejection count, average recovery time, average recovery attempts, and per-strategy
+success rates. Presented on the **Analytics** page (`/analytics`).
+
+### 10.5 Policies (read-only)
+
+`GET /api/v1/policies` (`/policies` page) describes the ONE real deterministic Policy
+Engine — condition → decision → restriction for each of the 7 rules — with every
+threshold read live from `config.settings`, never a hardcoded copy. Deliberately
+read-only: an editor would need its own re-validation against the engine's actual
+rule logic to avoid a config that looks enforced but isn't; change `POLICY_*` env
+vars and restart instead.
+
+### 10.6 Deterministic Evaluation Framework
+
+```bash
+cd apps/api
+python -m evaluation.runner
+```
+
+Runs 25 scenarios (`apps/api/evaluation/scenarios.py`) against the REAL pipeline —
+`process_inbound_event → run_intelligence → get_or_create_action → execute_action →
+approve/reject → verify_unknown_action → reconcile` — each in its own isolated
+in-memory database with a deterministic fake Razorpay double
+(`evaluation/fake_razorpay.py`). Nothing is hardcoded: pass/fail and the per-category
+percentages (diagnosis, prediction, strategy, policy safety, action safety,
+verification, recovery outcome, idempotency, UNKNOWN safety, approval safety) are
+computed from what actually happened, printed as a human-readable report and written
+to `evaluation/last_run.json`.
+
+### 10.7 Demo Scenarios
+
+All three use the real backend end-to-end — nothing here fakes a result:
+
+1. **Automatic recovery** — Simulator preset *"UPI Session Timeout"* (₹4,999) →
+   Recovery/Intelligence page → Analyze → Create Payment Link → Confirm/Simulate
+   payment → `RECOVERED`.
+2. **Human approval** — Simulator preset *"Card Insufficient Funds"* (₹14,999,
+   exceeds the ₹5,000 auto-approval ceiling) → Approvals page → Approve →
+   `execute_action()` re-validates and creates the Payment Link.
+3. **UNKNOWN safety** — reproduced and verified end-to-end by
+   `evaluation.scenarios.scenario_13` through `scenario_19` and
+   `tests/test_phase4_safety.py::test_e2e_full_timeout_to_unknown_to_verification_chain`
+   (a real Razorpay test-mode timeout is not reliably triggerable on demand from a
+   live UI click, so this is proven via the deterministic harness rather than staged
+   in the browser — the UNKNOWN badge, "Verify with Razorpay" control, and resolution
+   flow shown on the Recovery/Intelligence drawer are the same real components those
+   tests exercise).

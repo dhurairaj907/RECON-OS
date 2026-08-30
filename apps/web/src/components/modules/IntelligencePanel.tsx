@@ -18,6 +18,9 @@ import {
   ExternalLink,
   Link2,
   CheckCircle2,
+  HelpCircle,
+  ThumbsUp,
+  ThumbsDown,
 } from "lucide-react";
 import dynamic from "next/dynamic";
 import { api } from "@/lib/api";
@@ -146,6 +149,10 @@ const actionStateStyle: Record<string, string> = {
   EXPIRED: "text-status-danger border-status-danger-border bg-status-danger-bg",
   CANCELLED: "text-status-danger border-status-danger-border bg-status-danger-bg",
   FAILED: "text-status-danger border-status-danger-border bg-status-danger-bg",
+  // Deliberately NOT the FAILED/danger styling — an unconfirmed outcome is not
+  // a known failure. Uses the same warning tone as NEEDS_APPROVAL/PARTIAL to
+  // read as "needs attention, paused" rather than "broken."
+  UNKNOWN: "text-status-warning border-status-warning-border bg-status-warning-bg",
 };
 
 function ActionSection({ env, caseId }: { env: IntelligenceEnvelope; caseId: string }) {
@@ -189,6 +196,24 @@ function ActionSection({ env, caseId }: { env: IntelligenceEnvelope; caseId: str
     run(async () => {
       if (action) await api.executeAction(action.id);
     }, "retry");
+
+  const approve = () =>
+    run(async () => {
+      if (action) await api.approveAction(action.id);
+    }, "approve");
+
+  const reject = () =>
+    run(async () => {
+      if (action) await api.rejectAction(action.id);
+    }, "reject");
+
+  const verifyUnknown = () =>
+    run(async () => {
+      if (!action) return;
+      setReconcileMsg(null);
+      const res = await api.verifyUnknownAction(action.id);
+      setReconcileMsg(res.message);
+    }, "verify-unknown");
 
   const confirmPayment = () =>
     run(async () => {
@@ -287,6 +312,7 @@ function ActionSection({ env, caseId }: { env: IntelligenceEnvelope; caseId: str
               )}
             >
               {uiState === "RECOVERED" ? <CheckCircle2 className="w-3.5 h-3.5" /> :
+               uiState === "UNKNOWN" ? <HelpCircle className="w-3.5 h-3.5" /> :
                ["BLOCKED", "FAILED", "EXPIRED", "CANCELLED"].includes(uiState) ? <Ban className="w-3.5 h-3.5" /> :
                ["NEEDS_APPROVAL", "PARTIAL"].includes(uiState) ? <AlertTriangle className="w-3.5 h-3.5" /> :
                <Activity className="w-3.5 h-3.5" />}
@@ -319,13 +345,53 @@ function ActionSection({ env, caseId }: { env: IntelligenceEnvelope; caseId: str
             </div>
           )}
 
-          {(uiState === "BLOCKED" || uiState === "NEEDS_APPROVAL" || uiState === "FAILED") && (
+          {uiState === "NEEDS_APPROVAL" && (
+            <div className="rounded border border-status-warning-border/50 bg-status-warning-bg px-3 py-2 space-y-2">
+              <p className="text-[12px] font-mono text-status-warning font-semibold">
+                HUMAN APPROVAL REQUIRED
+              </p>
+              <p className="text-[12px] text-fg-muted">
+                {env.policy?.reason || action.error_message || "This action requires a human decision before it can execute."}
+              </p>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] font-mono text-fg-faint pt-1 border-t border-status-warning-border/30">
+                <span>Amount <span className="text-fg-secondary">{formatINR(amount)}</span></span>
+                <span>Risk <span className={cn("font-semibold", riskTone[env.policy?.risk_level || ""])}>{env.policy?.risk_level || "—"}</span></span>
+                <span>Strategy <span className="text-fg-secondary">{strategyAction || "—"}</span></span>
+                <span>Recovery probability <span className="text-fg-secondary">{env.prediction ? `${Math.round(env.prediction.recovery_probability * 100)}%` : "—"}</span></span>
+              </div>
+            </div>
+          )}
+
+          {uiState === "UNKNOWN" && (
+            <div className="rounded border border-status-warning-border/50 bg-status-warning-bg px-3 py-2 space-y-1">
+              <p className="text-[12px] font-mono text-status-warning font-semibold flex items-center gap-1.5">
+                <HelpCircle className="w-3.5 h-3.5" /> OUTCOME UNKNOWN
+              </p>
+              <p className="text-[12px] text-fg-muted">
+                Outcome could not be confirmed. Recovery action is paused until
+                verification — RECON will never guess or blindly retry a
+                request that may have already reached Razorpay.
+              </p>
+              {action.error_message && (
+                <p className="text-[11px] font-mono text-fg-faint">{action.error_message}</p>
+              )}
+            </div>
+          )}
+
+          {(uiState === "BLOCKED" || uiState === "FAILED") && (
             <div className="rounded border border-status-danger-border/40 bg-status-danger-bg/40 px-3 py-2">
               <p className="text-[12px] font-mono text-status-danger">
-                {action.blocked_reason || action.error_code || "Execution did not complete"}
+                {action.blocked_reason === "HUMAN_REJECTED"
+                  ? "REJECTED BY OPERATOR"
+                  : action.blocked_reason || action.error_code || "Execution did not complete"}
               </p>
               {action.error_message && (
                 <p className="text-[12px] text-fg-muted mt-0.5">{action.error_message}</p>
+              )}
+              {action.blocked_reason === "HUMAN_REJECTED" && action.human_decided_at && (
+                <p className="text-[11px] font-mono text-fg-faint mt-0.5">
+                  {action.human_decided_by || "Operator"} · {formatDateTime(action.human_decided_at)}
+                </p>
               )}
             </div>
           )}
@@ -378,6 +444,45 @@ function ActionSection({ env, caseId }: { env: IntelligenceEnvelope; caseId: str
           )}
 
           <div className="flex flex-wrap items-center gap-2">
+            {uiState === "NEEDS_APPROVAL" && (
+              <>
+                <button
+                  onClick={approve}
+                  disabled={busy !== null}
+                  className="inline-flex h-10 items-center gap-2 rounded-lg bg-status-success px-4 font-mono text-sm font-medium text-white transition-colors hover:opacity-90 disabled:opacity-50"
+                >
+                  {busy === "approve" ? (
+                    <><Loader2 className="w-4 h-4 animate-spin" /> Approving…</>
+                  ) : (
+                    <><ThumbsUp className="w-4 h-4" /> Approve</>
+                  )}
+                </button>
+                <button
+                  onClick={reject}
+                  disabled={busy !== null}
+                  className="inline-flex h-10 items-center gap-2 rounded-lg border border-status-danger-border bg-surface-subtle px-4 font-mono text-sm font-medium text-status-danger transition-colors hover:bg-status-danger-bg disabled:opacity-50"
+                >
+                  {busy === "reject" ? (
+                    <><Loader2 className="w-4 h-4 animate-spin" /> Rejecting…</>
+                  ) : (
+                    <><ThumbsDown className="w-4 h-4" /> Reject</>
+                  )}
+                </button>
+              </>
+            )}
+            {uiState === "UNKNOWN" && (
+              <button
+                onClick={verifyUnknown}
+                disabled={busy !== null}
+                className="inline-flex h-10 items-center gap-2 rounded-lg bg-accent px-4 font-mono text-sm font-medium text-white transition-colors hover:bg-accent-hover disabled:opacity-50"
+              >
+                {busy === "verify-unknown" ? (
+                  <><Loader2 className="w-4 h-4 animate-spin" /> Verifying with Razorpay…</>
+                ) : (
+                  <><HelpCircle className="w-4 h-4" /> Verify with Razorpay</>
+                )}
+              </button>
+            )}
             {(uiState === "WAITING_FOR_PAYMENT" || uiState === "PARTIAL") && (
               <button
                 onClick={confirmPayment}
@@ -391,7 +496,7 @@ function ActionSection({ env, caseId }: { env: IntelligenceEnvelope; caseId: str
                 )}
               </button>
             )}
-            {(uiState === "BLOCKED" || uiState === "FAILED") && (
+            {(uiState === "BLOCKED" || uiState === "FAILED") && action.blocked_reason !== "HUMAN_REJECTED" && (
               <button
                 onClick={retry}
                 disabled={busy !== null}

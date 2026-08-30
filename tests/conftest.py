@@ -43,6 +43,14 @@ def setup_database(monkeypatch):
     """Create all tables before each test and drop them after."""
     monkeypatch.setattr(database, "engine", engine)
     monkeypatch.setattr(database, "SessionLocal", TestingSessionLocal)
+    # The simulator is a test/demo utility — enable it for the suite. Individual
+    # tests turn it off explicitly to assert the 403 gate.
+    monkeypatch.setattr(settings, "RECON_SIMULATOR_ENABLED", True)
+    # Starlette's TestClient reports a fixed fake client host for every request,
+    # so the per-IP rate limiter would otherwise bucket the entire test suite
+    # together. Individual tests exercise the limiter directly (test_security.py)
+    # against a real, non-zero limit.
+    monkeypatch.setattr(settings, "RECON_RATE_LIMIT_PER_MINUTE", 0)
 
     Base.metadata.create_all(bind=engine)
     # Seed default merchant
