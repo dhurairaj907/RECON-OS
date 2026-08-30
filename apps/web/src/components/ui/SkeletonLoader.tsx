@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils";
 
 export function SkeletonRow({ cols = 5 }: { cols?: number }) {
   return (
-    <div className="flex items-center space-x-4 py-3.5 px-4 border-b border-border/50 animate-pulse">
+    <div className="flex items-center space-x-4 py-4 px-4 border-b border-border/50 animate-pulse">
       {Array.from({ length: cols }).map((_, i) => (
         <div
           key={i}

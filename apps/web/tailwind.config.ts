@@ -85,6 +85,11 @@ const config: Config = {
         "depth-hover": "var(--shadow-depth-hover)",
       },
       fontSize: {
+        /* Slightly opened-up base scale for readability — a polished
+         * enterprise-dashboard feel rather than the tighter defaults.
+         * xs 12->13px, sm 14->15px; base/lg untouched (already in range). */
+        xs: ["0.8125rem", { lineHeight: "1.25rem" }],
+        sm: ["0.9375rem", { lineHeight: "1.4rem" }],
         "display-sm": ["1.5rem", { lineHeight: "1", letterSpacing: "-0.02em" }],
         "display-md": ["2.25rem", { lineHeight: "1", letterSpacing: "-0.024em" }],
         "display-lg": ["clamp(1.75rem,3.6vw,2.75rem)", { lineHeight: "1", letterSpacing: "-0.022em" }],

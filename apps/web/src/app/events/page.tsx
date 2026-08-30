@@ -2,16 +2,26 @@
 
 import React, { useState } from "react";
 import useSWR from "swr";
-import { Search, Filter, RefreshCw, Zap, ArrowUpDown, ChevronLeft, ChevronRight } from "lucide-react";
+import { Search, ChevronLeft, ChevronRight } from "lucide-react";
 import { AppShell } from "@/components/layout/AppShell";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { DetailDrawer } from "@/components/layout/DetailDrawer";
 import { JsonViewer } from "@/components/ui/JsonViewer";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonRow } from "@/components/ui/SkeletonLoader";
+import { Reveal } from "@/components/spatial/Reveal";
+import { SectionBand } from "@/components/modules/SectionBand";
+import { EventPulse } from "@/components/modules/EventPulse";
 import { api } from "@/lib/api";
 import { RevenueEvent, PaginatedResponse } from "@/lib/types";
 import { formatINR, formatDateTime, formatRelativeTime } from "@/lib/utils";
+
+function streamTime(iso?: string | null) {
+  if (!iso) return "--:--:--";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "--:--:--";
+  return d.toLocaleTimeString("en-GB", { hour12: false });
+}
 
 export default function LiveEventsPage() {
   const [page, setPage] = useState(1);
@@ -38,32 +48,34 @@ export default function LiveEventsPage() {
 
   return (
     <AppShell onRefresh={() => mutate()} isRefreshing={isValidating}>
-      {/* Page Title */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-border pb-6">
-        <div>
-          <div className="flex items-center space-x-2">
-            <Zap className="w-4 h-4 text-status-info" />
-            <span className="text-xs font-mono tracking-wider text-fg-muted uppercase">
-              Event Ingestion Plane
-            </span>
-          </div>
-          <h1 className="text-2xl font-bold tracking-tight text-fg font-mono mt-1">
-            LIVE REVENUE EVENTS
-          </h1>
-          <p className="text-xs text-fg-muted mt-1">
-            Raw and normalized event logs received from Razorpay webhooks and simulation engines.
-          </p>
-        </div>
+      <SectionBand
+        eyebrow="EVENT INGESTION PLANE"
+        title="LIVE REVENUE EVENTS"
+        subtitle="Raw and normalized event logs received from Razorpay webhooks and simulation engines."
+      />
 
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="motion-safe-only relative flex h-1.5 w-1.5">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-status-info opacity-75" />
+            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-status-info" />
+          </span>
+          <span className="label-mono">Live</span>
+        </div>
         <div className="text-xs font-mono text-fg-muted bg-surface px-3 py-1.5 rounded-lg border border-border">
           Total Ingested: <span className="text-fg font-bold">{data?.total || 0}</span>
         </div>
       </div>
 
-      {/* Filter & Search Bar */}
-      <div className="bg-surface p-4 rounded-lg border border-border flex flex-col md:flex-row items-center justify-between gap-3">
+      {!isLoading && data && data.items.length > 0 && (
+        <EventPulse events={data.items} onSelect={setSelectedEvent} />
+      )}
+
+      {/* Filter bar + table stay visually tight to each other — one operational unit */}
+      <div className="space-y-3">
+      <div className="rounded-2xl border border-border bg-surface/60 p-4 backdrop-blur-sm flex flex-col md:flex-row items-center justify-between gap-3">
         <div className="relative flex-1 w-full">
-          <Search className="w-4 h-4 absolute left-3 top-2.5 text-fg-faint" />
+          <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-fg-faint" />
           <input
             type="text"
             placeholder="Search by event ID (e.g. evt_...)"
@@ -72,7 +84,7 @@ export default function LiveEventsPage() {
               setSearchQuery(e.target.value);
               setPage(1);
             }}
-            className="w-full bg-surface-subtle border border-border rounded-lg pl-9 pr-4 py-1.5 text-xs text-fg placeholder-fg-faint focus:outline-none focus:border-accent"
+            className="w-full h-11 bg-surface-subtle border border-border rounded-lg pl-10 pr-4 text-sm text-fg placeholder-fg-faint focus:outline-none focus:border-accent"
           />
         </div>
 
@@ -84,7 +96,7 @@ export default function LiveEventsPage() {
               setEventTypeFilter(e.target.value);
               setPage(1);
             }}
-            className="bg-surface-subtle border border-border rounded-lg px-3 py-1.5 text-xs text-fg-secondary focus:outline-none focus:border-accent font-mono"
+            className="h-11 bg-surface-subtle border border-border rounded-lg px-3.5 text-sm text-fg-secondary focus:outline-none focus:border-accent font-mono"
           >
             <option value="">All Event Types</option>
             <option value="payment.failed">payment.failed</option>
@@ -99,7 +111,7 @@ export default function LiveEventsPage() {
               setStatusFilter(e.target.value);
               setPage(1);
             }}
-            className="bg-surface-subtle border border-border rounded-lg px-3 py-1.5 text-xs text-fg-secondary focus:outline-none focus:border-accent font-mono"
+            className="h-11 bg-surface-subtle border border-border rounded-lg px-3.5 text-sm text-fg-secondary focus:outline-none focus:border-accent font-mono"
           >
             <option value="">All Statuses</option>
             <option value="processed">Processed</option>
@@ -111,7 +123,7 @@ export default function LiveEventsPage() {
       </div>
 
       {/* Events Data Table */}
-      <div className="bg-surface rounded-lg border border-border overflow-hidden">
+      <div className="overflow-hidden rounded-2xl border border-border bg-surface/60 backdrop-blur-sm">
         {isLoading ? (
           <div className="p-4 space-y-2">
             <SkeletonRow cols={6} />
@@ -129,47 +141,48 @@ export default function LiveEventsPage() {
         ) : (
           <>
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-surface-elevated/50 text-fg-muted font-mono text-[11px] uppercase border-b border-border">
+              <table className="w-full text-left text-sm">
+                <thead className="sticky top-0 z-10 bg-surface-elevated/80 font-mono text-xs uppercase tracking-[0.08em] text-fg-faint border-b border-hairline backdrop-blur-sm">
                   <tr>
-                    <th className="py-3 px-4">Event ID</th>
-                    <th className="py-3 px-4">Event Type</th>
-                    <th className="py-3 px-4">Customer</th>
-                    <th className="py-3 px-4">Amount</th>
-                    <th className="py-3 px-4">Source</th>
-                    <th className="py-3 px-4">Status</th>
-                    <th className="py-3 px-4 text-right">Timestamp</th>
+                    <th className="py-4 px-4 w-24">Time</th>
+                    <th className="py-4 px-4">Event</th>
+                    <th className="py-4 px-4">Customer</th>
+                    <th className="py-4 px-4">Amount</th>
+                    <th className="py-4 px-4">Source</th>
+                    <th className="py-4 px-4">Status</th>
+                    <th className="py-4 px-4 text-right">Event ID</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-border/60">
+                <tbody className="divide-y divide-hairline">
                   {data.items.map((event) => (
-                    <tr
+                    <Reveal
                       key={event.id}
+                      as="tr"
                       onClick={() => setSelectedEvent(event)}
-                      className="hover:bg-surface-elevated/40 cursor-pointer transition-colors"
+                      className="cursor-pointer border-l-2 border-transparent transition-colors hover:border-status-info hover:bg-surface-elevated/40"
                     >
-                      <td className="py-3 px-4 font-mono font-medium text-status-info">
-                        {event.razorpay_event_id}
+                      <td className="py-4 px-4 font-mono font-semibold tabular-nums text-status-info">
+                        {streamTime(event.received_at)}
                       </td>
-                      <td className="py-3 px-4">
+                      <td className="py-4 px-4">
                         <StatusBadge status={event.event_type} type="event" />
                       </td>
-                      <td className="py-3 px-4 text-fg">
+                      <td className="py-4 px-4 text-fg">
                         {event.normalized_data?.customer_name || event.normalized_data?.customer_email || "N/A"}
                       </td>
-                      <td className="py-3 px-4 font-mono font-semibold text-fg tabular-nums">
+                      <td className="py-4 px-4 font-mono font-semibold text-fg tabular-nums">
                         {formatINR(event.normalized_data?.amount || "0")}
                       </td>
-                      <td className="py-3 px-4 font-mono uppercase text-fg-muted text-[11px]">
+                      <td className="py-4 px-4 font-mono uppercase text-fg-muted text-[11px]">
                         {event.source}
                       </td>
-                      <td className="py-3 px-4">
+                      <td className="py-4 px-4">
                         <StatusBadge status={event.processing_status} />
                       </td>
-                      <td className="py-3 px-4 text-right font-mono text-fg-muted">
-                        {formatDateTime(event.received_at)}
+                      <td className="py-4 px-4 text-right font-mono text-fg-faint text-[11px]">
+                        {event.razorpay_event_id}
                       </td>
-                    </tr>
+                    </Reveal>
                   ))}
                 </tbody>
               </table>
@@ -185,14 +198,14 @@ export default function LiveEventsPage() {
                 <button
                   disabled={page <= 1}
                   onClick={() => setPage((p) => Math.max(1, p - 1))}
-                  className="p-1 rounded bg-surface border border-border disabled:opacity-40 hover:bg-surface-elevated text-fg-secondary"
+                  className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface border border-border disabled:opacity-40 hover:bg-surface-elevated text-fg-secondary"
                 >
                   <ChevronLeft className="w-4 h-4" />
                 </button>
                 <button
                   disabled={page >= totalPages}
                   onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                  className="p-1 rounded bg-surface border border-border disabled:opacity-40 hover:bg-surface-elevated text-fg-secondary"
+                  className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface border border-border disabled:opacity-40 hover:bg-surface-elevated text-fg-secondary"
                 >
                   <ChevronRight className="w-4 h-4" />
                 </button>
@@ -200,6 +213,7 @@ export default function LiveEventsPage() {
             </div>
           </>
         )}
+      </div>
       </div>
 
       {/* Detail Drawer */}

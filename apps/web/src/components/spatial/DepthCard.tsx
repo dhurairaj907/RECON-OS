@@ -58,7 +58,7 @@ export function DepthCard({
           : style
       }
       className={cn(
-        "relative rounded-lg border border-border bg-surface transition-all duration-150 ease-spatial",
+        "relative rounded-xl border border-border bg-surface transition-all duration-150 ease-spatial",
         elevation === "card" && "shadow-card",
         elevation === "raised" && "shadow-elevated",
         highlight && "depth-highlight",

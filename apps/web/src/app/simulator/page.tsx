@@ -2,7 +2,6 @@
 
 import React, { useState } from "react";
 import {
-  FlaskConical,
   Play,
   CheckCircle,
   AlertCircle,
@@ -15,6 +14,7 @@ import {
 } from "lucide-react";
 import { AppShell } from "@/components/layout/AppShell";
 import { StatusBadge } from "@/components/ui/StatusBadge";
+import { SectionBand } from "@/components/modules/SectionBand";
 import { api } from "@/lib/api";
 import { SimulateEventRequest, SimulateEventResponse } from "@/lib/types";
 import { formatINR } from "@/lib/utils";
@@ -119,11 +119,20 @@ export default function SimulatorPage() {
   const [isExecuting, setIsExecuting] = useState(false);
   const [logs, setLogs] = useState<Array<{ timestamp: string; type: "info" | "success" | "error"; text: string }>>([
     {
-      timestamp: new Date().toLocaleTimeString(),
+      timestamp: "",
       type: "info",
       text: "RECON Event Simulator Laboratory ready. Select a preset or customize parameters.",
     },
   ]);
+
+  // Fill the initial log timestamp client-side (avoids SSR/client time mismatch).
+  React.useEffect(() => {
+    setLogs((prev) =>
+      prev.map((l, i) => (i === prev.length - 1 && !l.timestamp
+        ? { ...l, timestamp: new Date().toLocaleTimeString() }
+        : l))
+    );
+  }, []);
   const [lastResult, setLastResult] = useState<SimulateEventResponse | null>(null);
 
   // Custom form state
@@ -175,23 +184,16 @@ export default function SimulatorPage() {
 
   return (
     <AppShell>
-      {/* Page Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-border pb-6">
-        <div>
-          <div className="flex items-center space-x-2">
-            <FlaskConical className="w-4 h-4 text-accent" />
-            <span className="text-xs font-mono tracking-wider text-fg-muted uppercase">
-              Event Simulation Lab
-            </span>
-          </div>
-          <h1 className="text-2xl font-bold tracking-tight text-fg font-mono mt-1">
-            RECON EVENT SIMULATOR
-          </h1>
-          <p className="text-xs text-fg-muted mt-1">
-            Generate controlled Razorpay-format payment events and execute them through the real backend pipeline.
-          </p>
-        </div>
+      <SectionBand
+        eyebrow="EVENT SIMULATION LAB"
+        title="RECON EVENT SIMULATOR"
+        subtitle="Generate controlled Razorpay-format payment events and execute them through the real backend pipeline."
+      />
 
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <p className="inline-flex items-center gap-1.5 rounded border border-dashed border-status-warning-border bg-status-warning-bg px-2 py-1 text-[10px] font-mono font-bold uppercase tracking-wider text-status-warning">
+          Test lab · simulated payments are never real Razorpay recoveries
+        </p>
         <div className="flex items-center space-x-2 text-xs font-mono text-fg-muted bg-surface px-3 py-1.5 rounded-lg border border-border">
           <span className="w-2 h-2 rounded-full bg-status-success"></span>
           <span>Backend Pipeline Active</span>
@@ -200,7 +202,7 @@ export default function SimulatorPage() {
 
       {/* Preset Scenarios Grid */}
       <div>
-        <h2 className="text-sm font-semibold text-fg tracking-wide font-mono mb-3">
+        <h2 className="label-mono text-fg-secondary mb-3">
           PRESET PAYMENT SCENARIOS
         </h2>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -209,7 +211,7 @@ export default function SimulatorPage() {
             return (
               <div
                 key={preset.id}
-                className="bg-surface p-5 rounded-lg border border-border hover:border-border-highlight transition-all flex flex-col justify-between"
+                className="rounded-2xl border border-border bg-surface/60 p-5 backdrop-blur-sm hover:border-border-highlight transition-all flex flex-col justify-between"
               >
                 <div>
                   <div className="flex items-center justify-between">
@@ -228,9 +230,9 @@ export default function SimulatorPage() {
                 <button
                   disabled={isExecuting}
                   onClick={() => handleTrigger(preset.request)}
-                  className="mt-4 w-full flex items-center justify-center space-x-1.5 px-3 py-2 rounded-lg bg-accent text-white text-xs font-mono font-medium hover:bg-accent-hover transition-colors disabled:opacity-50"
+                  className="mt-4 w-full flex h-10 items-center justify-center space-x-1.5 rounded-lg bg-accent px-3 text-sm font-mono font-medium text-white transition-colors hover:bg-accent-hover disabled:opacity-50"
                 >
-                  <Play className="w-3.5 h-3.5 fill-current" />
+                  <Play className="w-4 h-4 fill-current" />
                   <span>{isExecuting ? "Executing..." : "Trigger Event"}</span>
                 </button>
               </div>
@@ -242,10 +244,10 @@ export default function SimulatorPage() {
       {/* Custom Event Builder & Live Execution Console */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Custom Event Form */}
-        <div className="bg-surface p-6 rounded-lg border border-border space-y-4">
+        <div className="rounded-2xl border border-border bg-surface/60 p-6 backdrop-blur-sm space-y-4">
           <div className="flex items-center justify-between border-b border-border pb-3">
             <div>
-              <h2 className="text-sm font-semibold text-fg tracking-wide font-mono">
+              <h2 className="label-mono text-fg-secondary">
                 CUSTOM EVENT BUILDER
               </h2>
               <p className="text-xs text-fg-muted mt-0.5">
@@ -267,7 +269,7 @@ export default function SimulatorPage() {
                 <select
                   value={form.event_type}
                   onChange={(e) => setForm({ ...form, event_type: e.target.value })}
-                  className="w-full bg-surface-subtle border border-border rounded px-3 py-1.5 text-fg focus:outline-none focus:border-accent"
+                  className="w-full h-11 bg-surface-subtle border border-border rounded-lg px-3.5 text-sm text-fg focus:outline-none focus:border-accent"
                 >
                   <option value="payment.failed">payment.failed</option>
                   <option value="payment.captured">payment.captured</option>
@@ -279,7 +281,7 @@ export default function SimulatorPage() {
                 <select
                   value={form.payment_method}
                   onChange={(e) => setForm({ ...form, payment_method: e.target.value })}
-                  className="w-full bg-surface-subtle border border-border rounded px-3 py-1.5 text-fg focus:outline-none focus:border-accent"
+                  className="w-full h-11 bg-surface-subtle border border-border rounded-lg px-3.5 text-sm text-fg focus:outline-none focus:border-accent"
                 >
                   <option value="upi">UPI</option>
                   <option value="card">Credit / Debit Card</option>
@@ -297,7 +299,7 @@ export default function SimulatorPage() {
                   step="0.01"
                   value={form.amount}
                   onChange={(e) => setForm({ ...form, amount: e.target.value })}
-                  className="w-full bg-surface-subtle border border-border rounded px-3 py-1.5 text-fg focus:outline-none focus:border-accent"
+                  className="w-full h-11 bg-surface-subtle border border-border rounded-lg px-3.5 text-sm text-fg focus:outline-none focus:border-accent"
                   required
                 />
               </div>
@@ -307,7 +309,7 @@ export default function SimulatorPage() {
                   type="text"
                   value={form.customer_name}
                   onChange={(e) => setForm({ ...form, customer_name: e.target.value })}
-                  className="w-full bg-surface-subtle border border-border rounded px-3 py-1.5 text-fg focus:outline-none focus:border-accent"
+                  className="w-full h-11 bg-surface-subtle border border-border rounded-lg px-3.5 text-sm text-fg focus:outline-none focus:border-accent"
                   required
                 />
               </div>
@@ -319,7 +321,7 @@ export default function SimulatorPage() {
                 type="email"
                 value={form.customer_email}
                 onChange={(e) => setForm({ ...form, customer_email: e.target.value })}
-                className="w-full bg-surface-subtle border border-border rounded px-3 py-1.5 text-fg focus:outline-none focus:border-accent"
+                className="w-full h-11 bg-surface-subtle border border-border rounded-lg px-3.5 text-sm text-fg focus:outline-none focus:border-accent"
                 required
               />
             </div>
@@ -332,7 +334,7 @@ export default function SimulatorPage() {
                     type="text"
                     value={form.failure_code || ""}
                     onChange={(e) => setForm({ ...form, failure_code: e.target.value })}
-                    className="w-full bg-surface-subtle border border-border rounded px-3 py-1.5 text-fg focus:outline-none focus:border-accent"
+                    className="w-full h-11 bg-surface-subtle border border-border rounded-lg px-3.5 text-sm text-fg focus:outline-none focus:border-accent"
                   />
                 </div>
                 <div>
@@ -341,7 +343,7 @@ export default function SimulatorPage() {
                     type="text"
                     value={form.error_description || ""}
                     onChange={(e) => setForm({ ...form, error_description: e.target.value })}
-                    className="w-full bg-surface-subtle border border-border rounded px-3 py-1.5 text-fg focus:outline-none focus:border-accent"
+                    className="w-full h-11 bg-surface-subtle border border-border rounded-lg px-3.5 text-sm text-fg focus:outline-none focus:border-accent"
                   />
                 </div>
               </div>
@@ -350,7 +352,7 @@ export default function SimulatorPage() {
             <button
               type="submit"
               disabled={isExecuting}
-              className="w-full flex items-center justify-center space-x-2 py-2.5 rounded-lg bg-accent text-white font-medium hover:bg-accent-hover transition-colors disabled:opacity-50 mt-2"
+              className="w-full flex h-11 items-center justify-center space-x-2 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent-hover transition-colors disabled:opacity-50 mt-2"
             >
               <Play className="w-4 h-4 fill-current" />
               <span>{isExecuting ? "Processing via Backend Pipeline..." : "Dispatch Custom Event"}</span>
@@ -359,7 +361,7 @@ export default function SimulatorPage() {
         </div>
 
         {/* Live Execution Console */}
-        <div className="bg-surface rounded-lg border border-border flex flex-col overflow-hidden">
+        <div className="bg-surface flex flex-col overflow-hidden rounded-2xl border border-border bg-surface/60 backdrop-blur-sm">
           <div className="flex items-center justify-between px-5 py-3.5 border-b border-border bg-surface-subtle">
             <div className="flex items-center space-x-2">
               <Terminal className="w-4 h-4 text-status-success" />

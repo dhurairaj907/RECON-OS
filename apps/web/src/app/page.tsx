@@ -9,7 +9,6 @@ import {
   CheckCircle2,
   TrendingDown,
   Activity,
-  ArrowUpRight,
   ChevronRight,
 } from "lucide-react";
 import { AppShell } from "@/components/layout/AppShell";
@@ -20,11 +19,22 @@ import { JsonViewer } from "@/components/ui/JsonViewer";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonCards } from "@/components/ui/SkeletonLoader";
 import { RevenueChart } from "@/components/modules/RevenueChart";
+import { CommandCenterHero } from "@/components/modules/CommandCenterHero";
+import { AnimatedNumber } from "@/components/ui/AnimatedNumber";
 import { Reveal } from "@/components/spatial/Reveal";
 import { deriveSystemPipeline } from "@/components/spatial/pipeline-model";
+import type { GlowTone } from "@/components/spatial/AtmosphericGlow";
 import { api } from "@/lib/api";
 import { DashboardMetrics, RecoveryCase, RevenueEvent } from "@/lib/types";
 import { formatINR, formatDateTime, formatRelativeTime } from "@/lib/utils";
+
+const SpatialField = dynamic(
+  () =>
+    import("@/components/spatial/three/SpatialPipeline").then(
+      (m) => m.SpatialField
+    ),
+  { ssr: false }
+);
 
 const RecoveryPipeline3D = dynamic(
   () =>
@@ -34,7 +44,7 @@ const RecoveryPipeline3D = dynamic(
   {
     ssr: false,
     loading: () => (
-      <div className="h-40 rounded-lg border border-border bg-surface/60 animate-pulse" />
+      <div className="h-40 animate-pulse rounded-xl border border-border bg-surface/60" />
     ),
   }
 );
@@ -51,41 +61,37 @@ export default function CommandCenterPage() {
 
   const isLoading = !metrics && !error;
 
-  return (
-    <AppShell onRefresh={() => mutate()} isRefreshing={isValidating}>
-      {/* Top Header & Context */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-border pb-6">
-        <div>
-          <div className="flex items-center space-x-2">
-            <span className="h-2 w-2 rounded-full bg-status-info animate-pulse"></span>
-            <span className="text-xs font-mono tracking-wider text-fg-muted uppercase">
-              Financial Control System
-            </span>
-          </div>
-          <h1 className="text-2xl font-bold tracking-tight text-fg font-mono mt-1">
-            REVENUE COMMAND CENTER
-          </h1>
-          <p className="text-xs text-fg-muted mt-1">
-            Real-time detection, observation, and lifecycle monitoring for Razorpay payment infrastructure.
-          </p>
-        </div>
+  const tone: GlowTone = React.useMemo(() => {
+    if (!metrics) return "idle";
+    const critical = (metrics.recent_cases || []).some(
+      (c) =>
+        c.priority === "CRITICAL" &&
+        !["RESOLVED", "CLOSED"].includes((c.status || "").toUpperCase())
+    );
+    if (critical) return "danger";
+    if ((metrics.active_recovery_cases ?? 0) > 0) return "warning";
+    if (Number(metrics.actions?.revenue_recovered ?? 0) > 0) return "success";
+    if ((metrics.events_processed ?? 0) > 0) return "info";
+    return "idle";
+  }, [metrics]);
 
-        <div className="flex items-center gap-3">
-          <Link
-            href="/simulator"
-            className="inline-flex items-center space-x-2 px-3.5 py-2 rounded-lg bg-accent text-white text-xs font-mono font-medium hover:bg-accent-hover transition-colors shadow-sm"
-          >
-            <span>Open Event Simulator</span>
-            <ArrowUpRight className="w-3.5 h-3.5" />
-          </Link>
-        </div>
-      </div>
+  return (
+    <AppShell onRefresh={() => mutate()} isRefreshing={isValidating} tone={tone} transparentHeader>
+      <CommandCenterHero
+        metrics={metrics}
+        tone={tone}
+        scene={
+          !isLoading ? (
+            <SpatialField stages={deriveSystemPipeline(metrics)} />
+          ) : null
+        }
+      />
 
       {/* KPI Cards Grid */}
       {isLoading ? (
         <SkeletonCards count={4} />
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <StatCard
             title="Revenue at Risk"
             value={metrics?.revenue_at_risk || "0.00"}
@@ -131,24 +137,22 @@ export default function CommandCenterPage() {
       )}
 
       {/* Phase 2 — THINK: Intelligence decision metrics (real data only) */}
-      <Reveal className="bg-surface rounded-lg border border-border p-5 shadow-card depth-highlight block">
-        <div className="flex items-center justify-between mb-4">
+      <Reveal className="block rounded-2xl border border-border bg-surface/60 p-6 depth-highlight backdrop-blur-sm">
+        <div className="mb-5 flex items-start justify-between gap-3">
           <div>
-            <div className="flex items-center gap-2">
-              <h2 className="text-sm font-semibold text-fg tracking-wide font-mono">
-                RECON INTELLIGENCE
-              </h2>
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="label-mono text-fg-secondary">RECON Intelligence</h2>
               <span
-                className={`text-[10px] font-mono font-semibold px-2 py-0.5 rounded border tracking-wide ${
+                className={`rounded-full border px-2 py-[3px] font-mono text-[10px] font-semibold uppercase tracking-[0.1em] ${
                   metrics?.intelligence?.ai_configured
-                    ? "text-status-success border-status-success-border bg-status-success-bg"
-                    : "text-fg-muted border-border bg-surface-elevated"
+                    ? "border-status-success-border bg-status-success-bg text-status-success"
+                    : "border-hairline bg-surface-elevated text-fg-muted"
                 }`}
               >
-                {metrics?.intelligence?.ai_configured ? "AI-ENHANCED ANALYSIS" : "DETERMINISTIC ANALYSIS"}
+                {metrics?.intelligence?.ai_configured ? "AI-Enhanced" : "Deterministic"}
               </span>
             </div>
-            <p className="text-xs text-fg-muted mt-0.5">
+            <p className="mt-1.5 text-xs text-fg-muted">
               {metrics?.intelligence?.ai_configured
                 ? "AI-assisted diagnosis → deterministic prediction → strategy → policy · Phase 2.5"
                 : "Deterministic diagnosis → prediction → strategy → policy · Phase 2.5 (THINK)"}
@@ -156,83 +160,77 @@ export default function CommandCenterPage() {
           </div>
           <Link
             href="/intelligence"
-            className="text-xs font-mono text-accent hover:text-accent-hover flex items-center gap-1 transition-colors"
+            className="flex shrink-0 items-center gap-1 font-mono text-xs text-accent transition-colors hover:text-accent-hover"
           >
-            View analyses <ChevronRight className="w-3.5 h-3.5" />
+            View analyses <ChevronRight className="h-3.5 w-3.5" />
           </Link>
         </div>
         {!metrics?.intelligence ? (
-          <p className="text-xs text-fg-faint font-mono py-3">
+          <p className="py-3 font-mono text-xs text-fg-faint">
             No intelligence decisions yet. Open a recovery case and run{" "}
             <span className="text-fg-secondary">Analyze Case</span>.
           </p>
         ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-4">
             {[
               { label: "Cases Analyzed", value: metrics.intelligence.cases_analyzed, tone: "text-fg" },
               { label: "High Recovery Probability", value: metrics.intelligence.high_recovery_probability, tone: "text-status-success" },
               { label: "Needs Approval", value: metrics.intelligence.needs_approval, tone: "text-status-warning" },
               { label: "Policy Rejected", value: metrics.intelligence.policy_rejected, tone: "text-status-danger" },
             ].map((m) => (
-              <div key={m.label} className="rounded-lg border border-border bg-surface-subtle p-4">
-                <div className={`text-2xl font-bold font-mono tabular-nums ${m.tone}`}>
-                  {m.value}
-                </div>
-                <div className="text-[11px] font-mono text-fg-muted mt-1 uppercase tracking-wider">
-                  {m.label}
-                </div>
+              <div key={m.label}>
+                <div className="label-mono">{m.label}</div>
+                <AnimatedNumber
+                  as="div"
+                  value={m.value}
+                  className={`mt-1.5 text-[1.7rem] font-bold leading-none tabular-nums ${m.tone}`}
+                />
               </div>
             ))}
           </div>
         )}
 
         {/* Phase 3 — ACT: recovery action metrics (real data only) */}
-        <div className="mt-4 border-t border-border pt-4">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <h3 className="text-xs font-semibold text-fg tracking-wide font-mono uppercase">
-                Recovery Actions
-              </h3>
-              <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded border border-status-warning-border/50 bg-status-warning-bg text-status-warning tracking-wide">
-                RAZORPAY {metrics?.actions?.test_mode === false ? "LIVE" : "TEST MODE"}
+        <div className="mt-6 border-t border-hairline pt-5">
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            <h3 className="label-mono text-fg-secondary">Recovery Actions</h3>
+            <span className="rounded-full border border-status-warning-border/50 bg-status-warning-bg px-2 py-[3px] font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-status-warning">
+              Razorpay {metrics?.actions?.test_mode === false ? "Live" : "Test Mode"}
+            </span>
+            {metrics?.actions?.simulator_enabled && (
+              <span className="rounded-full border border-status-warning-border/50 bg-status-warning-bg px-2 py-[3px] font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-status-warning">
+                Simulator On
               </span>
-              {metrics?.actions?.simulator_enabled && (
-                <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded border border-status-warning-border/50 bg-status-warning-bg text-status-warning tracking-wide">
-                  SIMULATOR ON
-                </span>
-              )}
-            </div>
+            )}
           </div>
           {!metrics?.actions ? (
-            <p className="text-xs text-fg-faint font-mono py-2">
+            <p className="py-2 font-mono text-xs text-fg-faint">
               No recovery actions yet. Open a policy-approved case and{" "}
               <span className="text-fg-secondary">Create Payment Link</span>.
             </p>
           ) : (
             <>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-              {[
-                { label: "Actions Executed", value: metrics.actions.actions_executed, tone: "text-fg", currency: false },
-                { label: "Pending Recoveries", value: metrics.actions.pending_recoveries, tone: "text-status-info", currency: false },
-                { label: "Revenue Recovered", value: formatINR(metrics.actions.revenue_recovered), tone: "text-status-success", currency: true },
-                { label: "Recovery Rate", value: `${Math.round((metrics.actions.recovery_rate || 0) * 100)}%`, tone: "text-fg", currency: true },
-              ].map((m) => (
-                <div key={m.label} className="rounded-lg border border-border bg-surface-subtle p-4">
-                  <div className={`text-2xl font-bold font-mono tabular-nums ${m.tone}`}>
-                    {m.value}
+              <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-4">
+                {[
+                  { label: "Actions Executed", value: metrics.actions.actions_executed, tone: "text-fg" },
+                  { label: "Pending Recoveries", value: metrics.actions.pending_recoveries, tone: "text-status-info" },
+                  { label: "Revenue Recovered", value: formatINR(metrics.actions.revenue_recovered), tone: "text-status-success" },
+                  { label: "Recovery Rate", value: `${Math.round((metrics.actions.recovery_rate || 0) * 100)}%`, tone: "text-fg" },
+                ].map((m) => (
+                  <div key={m.label}>
+                    <div className="label-mono">{m.label}</div>
+                    <div className={`mt-1.5 text-[1.7rem] font-bold leading-none tabular-nums ${m.tone}`}>
+                      {m.value}
+                    </div>
                   </div>
-                  <div className="text-[11px] font-mono text-fg-muted mt-1 uppercase tracking-wider">
-                    {m.label}
-                  </div>
-                </div>
-              ))}
-            </div>
-            {Number(metrics.actions.simulated_revenue_recovered) > 0 && (
-              <p className="text-[10px] font-mono text-status-warning/80 mt-2">
-                + {formatINR(metrics.actions.simulated_revenue_recovered)} simulated (excluded from Revenue Recovered)
-                {metrics.actions.partial_recoveries > 0 && ` · ${metrics.actions.partial_recoveries} partial`}
-              </p>
-            )}
+                ))}
+              </div>
+              {Number(metrics.actions.simulated_revenue_recovered) > 0 && (
+                <p className="mt-3 font-mono text-[10px] text-status-warning/80">
+                  + {formatINR(metrics.actions.simulated_revenue_recovered)} simulated (excluded from Revenue Recovered)
+                  {metrics.actions.partial_recoveries > 0 && ` · ${metrics.actions.partial_recoveries} partial`}
+                </p>
+              )}
             </>
           )}
         </div>
@@ -241,12 +239,12 @@ export default function CommandCenterPage() {
       {/* Main Grid: Revenue Dynamics + Live Activity Feed */}
       <Reveal as="div" className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left 2 Cols: Revenue Chart + Active Cases Snapshot */}
-        <div className="lg:col-span-2 space-y-6">
+        <div className="lg:col-span-2 min-w-0 space-y-6">
           {/* Revenue Chart Panel */}
-          <div className="bg-surface p-6 rounded-lg border border-border">
+          <div className="rounded-2xl border border-border bg-surface/60 p-6 backdrop-blur-sm">
             <div className="flex items-center justify-between mb-4">
               <div>
-                <h2 className="text-sm font-semibold text-fg tracking-wide font-mono">
+                <h2 className="label-mono text-fg-secondary">
                   REVENUE DYNAMICS
                 </h2>
                 <p className="text-xs text-fg-muted mt-0.5">
@@ -258,10 +256,10 @@ export default function CommandCenterPage() {
           </div>
 
           {/* Active Recovery Cases Table */}
-          <div className="bg-surface rounded-lg border border-border overflow-hidden">
-            <div className="flex items-center justify-between p-5 border-b border-border bg-surface-subtle">
+          <div className="overflow-hidden rounded-2xl border border-border bg-surface/60 backdrop-blur-sm">
+            <div className="flex items-center justify-between border-b border-hairline p-5">
               <div>
-                <h2 className="text-sm font-semibold text-fg tracking-wide font-mono">
+                <h2 className="label-mono text-fg-secondary">
                   ACTIVE RECOVERY CASES
                 </h2>
                 <p className="text-xs text-fg-muted mt-0.5">
@@ -285,40 +283,40 @@ export default function CommandCenterPage() {
               />
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
-                  <thead className="bg-surface-elevated/50 text-fg-muted font-mono text-[11px] uppercase border-b border-border">
+                <table className="w-full text-left text-sm">
+                  <thead className="border-b border-hairline font-mono text-xs uppercase tracking-[0.1em] text-fg-faint">
                     <tr>
-                      <th className="py-3 px-4">Case Number</th>
-                      <th className="py-3 px-4">Customer</th>
-                      <th className="py-3 px-4">Amount at Risk</th>
-                      <th className="py-3 px-4">Priority</th>
-                      <th className="py-3 px-4">Status</th>
-                      <th className="py-3 px-4 text-right">Age</th>
+                      <th className="px-4 py-3.5 font-medium">Case Number</th>
+                      <th className="py-3.5 px-4">Customer</th>
+                      <th className="py-3.5 px-4">Amount at Risk</th>
+                      <th className="py-3.5 px-4">Priority</th>
+                      <th className="py-3.5 px-4">Status</th>
+                      <th className="py-3.5 px-4 text-right">Age</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-border/60">
+                  <tbody className="divide-y divide-hairline">
                     {metrics.recent_cases.slice(0, 5).map((c) => (
                       <tr
                         key={c.id}
                         onClick={() => setSelectedCase(c)}
-                        className="hover:bg-surface-elevated/40 cursor-pointer transition-colors"
+                        className="cursor-pointer transition-colors hover:bg-surface-hover/50"
                       >
-                        <td className="py-3 px-4 font-mono font-medium text-status-info">
+                        <td className="py-4 px-4 font-mono font-medium text-status-info">
                           {c.case_number}
                         </td>
-                        <td className="py-3 px-4 text-fg">
+                        <td className="py-4 px-4 text-fg">
                           {c.customer?.name || c.customer?.email || "Unknown"}
                         </td>
-                        <td className="py-3 px-4 font-mono font-semibold text-fg tabular-nums">
+                        <td className="py-4 px-4 font-mono font-semibold text-fg tabular-nums">
                           {formatINR(c.amount_at_risk)}
                         </td>
-                        <td className="py-3 px-4">
+                        <td className="py-4 px-4">
                           <StatusBadge status={c.priority} type="priority" />
                         </td>
-                        <td className="py-3 px-4">
+                        <td className="py-4 px-4">
                           <StatusBadge status={c.status} type="case" />
                         </td>
-                        <td className="py-3 px-4 text-right font-mono text-fg-muted">
+                        <td className="py-4 px-4 text-right font-mono text-fg-muted">
                           {formatRelativeTime(c.opened_at)}
                         </td>
                       </tr>
@@ -331,13 +329,11 @@ export default function CommandCenterPage() {
         </div>
 
         {/* Right 1 Col: Live RECON Activity Stream */}
-        <div className="bg-surface rounded-lg border border-border flex flex-col h-full overflow-hidden">
-          <div className="flex items-center justify-between p-5 border-b border-border bg-surface-subtle">
+        <div className="flex h-full flex-col overflow-hidden rounded-2xl border border-border bg-surface/60 backdrop-blur-sm">
+          <div className="flex items-center justify-between border-b border-hairline p-5">
             <div className="flex items-center space-x-2">
-              <span className="w-2 h-2 rounded-full bg-status-success animate-ping"></span>
-              <h2 className="text-sm font-semibold text-fg tracking-wide font-mono">
-                LIVE ACTIVITY FEED
-              </h2>
+              <span className="motion-safe-only h-2 w-2 animate-ping rounded-full bg-status-success"></span>
+              <h2 className="label-mono text-fg-secondary">LIVE ACTIVITY FEED</h2>
             </div>
             <Link
               href="/events"
@@ -360,7 +356,7 @@ export default function CommandCenterPage() {
                 <div
                   key={evt.id}
                   onClick={() => setSelectedEvent(evt)}
-                  className="p-3 rounded-lg border border-border/80 bg-surface-subtle/50 hover:bg-surface-elevated/70 cursor-pointer transition-all space-y-1.5"
+                  className="cursor-pointer space-y-1.5 rounded-xl border border-hairline bg-surface-subtle/40 p-3 transition-colors hover:bg-surface-hover/60"
                 >
                   <div className="flex items-center justify-between">
                     <StatusBadge status={evt.event_type} type="event" />
@@ -399,7 +395,7 @@ export default function CommandCenterPage() {
         {selectedCase && (
           <div className="space-y-6 text-xs">
             {/* Financial Overview Card */}
-            <div className="grid grid-cols-2 gap-4 p-4 rounded-lg bg-surface-subtle border border-border">
+            <div className="grid grid-cols-2 gap-4 p-4 rounded-xl bg-surface-subtle/50 border border-hairline">
               <div>
                 <span className="text-fg-muted font-mono">Amount at Risk</span>
                 <div className="text-xl font-bold font-mono text-status-danger mt-1">
@@ -419,7 +415,7 @@ export default function CommandCenterPage() {
               <h3 className="text-xs font-mono font-semibold text-fg-secondary uppercase tracking-wider">
                 Failure Information (Deterministic Phase 1)
               </h3>
-              <div className="p-3.5 rounded-lg bg-surface-subtle border border-border space-y-2">
+              <div className="p-3.5 rounded-xl bg-surface-subtle/50 border border-hairline space-y-2">
                 <div className="flex justify-between">
                   <span className="text-fg-muted">Failure Reason:</span>
                   <span className="text-fg font-medium">{selectedCase.failure_reason || "N/A"}</span>
@@ -445,7 +441,7 @@ export default function CommandCenterPage() {
                 <h3 className="text-xs font-mono font-semibold text-fg-secondary uppercase tracking-wider">
                   Associated Customer
                 </h3>
-                <div className="p-3.5 rounded-lg bg-surface-subtle border border-border space-y-2">
+                <div className="p-3.5 rounded-xl bg-surface-subtle/50 border border-hairline space-y-2">
                   <div className="flex justify-between">
                     <span className="text-fg-muted">Name:</span>
                     <span className="text-fg font-medium">{selectedCase.customer.name || "N/A"}</span>
@@ -477,7 +473,7 @@ export default function CommandCenterPage() {
       >
         {selectedEvent && (
           <div className="space-y-6 text-xs">
-            <div className="p-4 rounded-lg bg-surface-subtle border border-border space-y-2 font-mono">
+            <div className="p-4 rounded-xl bg-surface-subtle/50 border border-hairline space-y-2 font-mono">
               <div className="flex justify-between">
                 <span className="text-fg-muted">Event ID:</span>
                 <span className="text-fg">{selectedEvent.razorpay_event_id}</span>

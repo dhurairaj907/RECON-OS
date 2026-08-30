@@ -330,25 +330,26 @@ export function RecoveryPipeline3D({
   return (
     <section
       className={cn(
-        "rounded-lg border border-border bg-surface/70 backdrop-blur-sm depth-highlight",
+        "rounded-2xl border border-border bg-surface/60 backdrop-blur-sm depth-highlight",
         className
       )}
     >
-      <div className="flex items-center justify-between border-b border-border px-4 py-3">
-        <div>
-          <h3 className="text-xs font-mono font-semibold uppercase tracking-widest text-fg-secondary">
-            {title}
-          </h3>
+      <div className="flex items-start justify-between gap-4 border-b border-hairline px-5 py-3.5">
+        <div className="min-w-0">
+          <h3 className="label-mono text-fg-secondary">{title}</h3>
           {caption && (
-            <p className="mt-0.5 text-[10px] font-mono text-fg-faint">{caption}</p>
+            <p className="mt-1 max-w-2xl font-mono text-[10px] leading-relaxed text-fg-faint">
+              {caption}
+            </p>
           )}
         </div>
-        <span className="hidden sm:inline text-[9px] font-mono uppercase tracking-widest text-fg-faint">
-          EVENT → DIAGNOSIS → PREDICTION → STRATEGY → POLICY → ACTION → RAZORPAY → RECOVERED
+        <span className="hidden shrink-0 text-right text-[9px] font-mono uppercase tracking-[0.16em] text-fg-faint xl:inline">
+          EVENT → DIAGNOSIS → PREDICTION → STRATEGY →<br />
+          POLICY → ACTION → RAZORPAY → RECOVERED
         </span>
       </div>
 
-      <div className="p-4">
+      <div className="p-5">
         {timelineOnly ? (
           <TimelineGraph stages={stages} label={title} />
         ) : (

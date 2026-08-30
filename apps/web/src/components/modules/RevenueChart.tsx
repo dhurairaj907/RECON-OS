@@ -40,8 +40,14 @@ export function RevenueChart({ data }: RevenueChartProps) {
         <span className="text-fg-faint text-[11px] font-mono">Past 7 Days Activity</span>
       </div>
 
-      {/* SVG Bar / Area Chart */}
-      <div className="h-56 w-full flex items-end justify-between gap-2 pt-6 pb-2 border-b border-border/80">
+      {/* Bar chart with faint reference gridlines */}
+      <div
+        className="relative h-56 w-full flex items-end justify-between gap-2 pt-6 pb-2 border-b border-border/80"
+        style={{
+          backgroundImage:
+            "repeating-linear-gradient(to top, transparent, transparent 27.5%, var(--grid-line) 27.5%, var(--grid-line) calc(27.5% + 1px))",
+        }}
+      >
         {data.map((item, index) => {
           const failed = parseFloat(item.failed_amount || "0");
           const captured = parseFloat(item.captured_amount || "0");
@@ -54,10 +60,20 @@ export function RevenueChart({ data }: RevenueChartProps) {
             day: "numeric",
           });
 
+          const isFirst = index === 0;
+          const isLast = index === data.length - 1;
+          const tipAlign = isFirst
+            ? "left-0"
+            : isLast
+            ? "right-0"
+            : "left-1/2 -translate-x-1/2";
+
           return (
             <div key={index} className="flex-1 flex flex-col items-center h-full justify-end group relative">
-              {/* Tooltip on Hover */}
-              <div className="opacity-0 group-hover:opacity-100 transition-opacity absolute -top-12 z-20 pointer-events-none bg-surface-elevated border border-border p-2 rounded shadow-xl text-[10px] font-mono whitespace-nowrap">
+              {/* Tooltip on hover — edge columns align inward so it never overflows */}
+              <div
+                className={`opacity-0 group-hover:opacity-100 transition-opacity absolute -top-14 ${tipAlign} z-20 pointer-events-none bg-surface-elevated border border-border p-2.5 rounded shadow-xl text-[11px] font-mono w-max max-w-[160px]`}
+              >
                 <div className="text-fg font-semibold">{dateLabel}</div>
                 <div className="text-status-danger">At Risk: {formatINR(failed)}</div>
                 <div className="text-status-success">Secured: {formatINR(captured)}</div>
@@ -78,7 +94,7 @@ export function RevenueChart({ data }: RevenueChartProps) {
               </div>
 
               {/* Day Label */}
-              <span className="text-[10px] font-mono text-fg-muted mt-2">
+              <span className="text-[11px] font-mono text-fg-muted mt-2">
                 {dateLabel}
               </span>
             </div>

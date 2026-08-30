@@ -12,7 +12,10 @@ export interface ThreePalette {
   warning: THREE.Color;
   danger: THREE.Color;
   muted: THREE.Color;
-  /** Per-status node colour. */
+  fgMuted: THREE.Color;
+  /** Matte near-black body colour for node meshes (theme-aware). */
+  body: THREE.Color;
+  /** Per-status node colour (used for edges/emissive). */
   status: Record<StageStatus, THREE.Color>;
   isDark: boolean;
 }
@@ -43,12 +46,17 @@ export function useThreePalette(): ThreePalette {
   }, [effective]);
 
   return useMemo(() => {
-    const accent = readVar("--c-accent", "#2563eb");
+    const accent = readVar("--c-accent", "#7482f6");
     const success = readVar("--c-success", "#34d399");
     const warning = readVar("--c-warning", "#fbbf24");
     const danger = readVar("--c-danger", "#fb7185");
-    const muted = readVar("--c-fg-faint", "#64748b");
-    const bg = readVar("--c-bg", "#0b0e14");
+    const muted = readVar("--c-fg-faint", "#686a78");
+    const bg = readVar("--c-bg", "#09090b");
+    const isDark = effective === "dark";
+    // node bodies: near-black in dark, a soft graphite in light (so edges read)
+    const body = isDark
+      ? bg.clone().lerp(new THREE.Color("#ffffff"), 0.04)
+      : readVar("--c-fg-secondary", "#373a44").clone().lerp(bg, 0.25);
     return {
       bg,
       accent,
@@ -56,7 +64,9 @@ export function useThreePalette(): ThreePalette {
       warning,
       danger,
       muted,
-      isDark: effective === "dark",
+      fgMuted: muted,
+      body,
+      isDark,
       status: {
         done: success,
         active: accent,

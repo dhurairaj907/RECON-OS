@@ -18,7 +18,7 @@ export function ThemeToggle() {
     <div
       role="radiogroup"
       aria-label="Interface theme"
-      className="flex items-center gap-0.5 rounded-lg border border-border bg-surface-subtle p-0.5"
+      className="flex items-center gap-0.5 rounded-lg border border-border bg-surface-subtle p-1"
     >
       {OPTIONS.map(({ value, label, Icon }) => {
         const active = choice === value;
@@ -32,14 +32,14 @@ export function ThemeToggle() {
             title={label}
             onClick={() => setTheme(value)}
             className={cn(
-              "flex h-6 w-6 items-center justify-center rounded-md transition-colors",
+              "flex h-8 w-8 items-center justify-center rounded-md transition-colors",
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface",
               active
                 ? "bg-surface-elevated text-fg shadow-sm"
                 : "text-fg-muted hover:text-fg"
             )}
           >
-            <Icon className="h-3.5 w-3.5" />
+            <Icon className="h-4 w-4" />
           </button>
         );
       })}

@@ -12,121 +12,129 @@
 
 @layer base {
   :root {
-    /* ---- LIGHT ---- */
-    --c-bg: 247 248 250;
+    /* ---- LIGHT — architectural glass control room ---- */
+    --c-bg: 250 250 249;
     --c-surface: 255 255 255;
-    --c-surface-subtle: 241 244 248;
-    --c-surface-hover: 235 239 245;
+    --c-surface-subtle: 244 244 243;
+    --c-surface-hover: 238 238 236;
     --c-surface-elevated: 255 255 255;
 
-    --c-border: 223 227 234;
-    --c-border-subtle: 233 236 241;
-    --c-border-highlight: 196 204 216;
+    --c-border: 226 225 222;
+    --c-border-subtle: 236 235 232;
+    --c-border-highlight: 202 200 195;
 
-    --c-accent: 37 99 235;
-    --c-accent-hover: 29 78 216;
-    --c-accent-subtle: 219 234 254;
+    --c-accent: 67 78 216;
+    --c-accent-hover: 52 61 190;
+    --c-accent-subtle: 226 227 250;
 
-    --c-fg: 15 23 42;
-    --c-fg-secondary: 51 65 85;
-    --c-fg-muted: 90 103 122;
-    --c-fg-faint: 113 122 140;
+    --c-fg: 18 18 23;
+    --c-fg-secondary: 55 58 68;
+    --c-fg-muted: 96 100 112;
+    --c-fg-faint: 128 130 140;
     --c-fg-inverse: 255 255 255;
 
     --c-success: 4 120 87;
     --c-warning: 180 83 9;
     --c-danger: 185 28 28;
-    --c-info: 29 78 216;
-    --c-neutral: 71 85 105;
+    --c-info: 67 78 216;
+    --c-neutral: 82 84 96;
 
-    --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.06), 0 1px 3px rgba(15, 23, 42, 0.04);
-    --shadow-elevated: 0 12px 32px -14px rgba(15, 23, 42, 0.18), 0 2px 8px -4px rgba(15, 23, 42, 0.08);
-    --shadow-depth-hover: 0 0 0 1px rgb(var(--c-accent) / 0.25), 0 14px 34px -16px rgba(15, 23, 42, 0.22);
+    --shadow-card: 0 1px 2px rgba(18, 18, 23, 0.05), 0 1px 3px rgba(18, 18, 23, 0.035);
+    --shadow-elevated: 0 12px 32px -14px rgba(18, 18, 23, 0.16), 0 2px 8px -4px rgba(18, 18, 23, 0.07);
+    --shadow-depth-hover: 0 0 0 1px rgb(var(--c-accent) / 0.22), 0 14px 34px -16px rgba(18, 18, 23, 0.2);
 
-    --grid-line: rgba(15, 23, 42, 0.045);
-    --grid-line-far: rgba(15, 23, 42, 0.028);
-    --ambient-1: rgba(37, 99, 235, 0.06);
-    --ambient-2: rgba(15, 23, 42, 0.035);
-    --vignette: rgba(15, 23, 42, 0.05);
+    --grid-line: rgba(18, 18, 23, 0.04);
+    --grid-line-far: rgba(18, 18, 23, 0.024);
+    --ambient-1: rgba(67, 78, 216, 0.05);
+    --ambient-2: rgba(18, 18, 23, 0.03);
+    --vignette: rgba(24, 24, 32, 0.045);
+    --light-cone: rgba(40, 46, 90, 0.028);
+    --hairline: rgba(18, 18, 23, 0.08);
 
     /* Film grain — architectural light room: barely there */
-    --grain-opacity: 0.022;
+    --grain-opacity: 0.02;
     --grain-blend: multiply;
 
     /* State-driven atmospheric glow (radial wash tints) */
-    --glow-info: rgba(37, 99, 235, 0.10);
+    --glow-info: rgba(67, 78, 216, 0.09);
     --glow-success: rgba(4, 120, 87, 0.10);
     --glow-warning: rgba(180, 83, 9, 0.10);
     --glow-danger: rgba(185, 28, 28, 0.10);
 
-    --scrollbar-track: 241 244 248;
-    --scrollbar-thumb: 205 212 222;
-    --scrollbar-thumb-hover: 176 186 200;
+    --scrollbar-track: 244 244 243;
+    --scrollbar-thumb: 208 208 205;
+    --scrollbar-thumb-hover: 180 180 176;
 
     color-scheme: light;
   }
 
   :root.dark {
-    /* ---- DARK (primary identity) ---- */
-    --c-bg: 11 14 20;
-    --c-surface: 18 23 34;
-    --c-surface-subtle: 22 29 43;
-    --c-surface-hover: 27 35 52;
-    --c-surface-elevated: 33 42 62;
+    /* ---- DARK (primary identity) — cinematic operations chamber ---- */
+    --c-bg: 9 9 11;
+    --c-surface: 15 15 18;
+    --c-surface-subtle: 19 19 23;
+    --c-surface-hover: 25 25 30;
+    --c-surface-elevated: 32 33 39;
 
-    --c-border: 30 38 56;
-    --c-border-subtle: 24 32 48;
-    --c-border-highlight: 44 56 82;
+    --c-border: 32 32 39;
+    --c-border-subtle: 23 23 28;
+    --c-border-highlight: 52 53 63;
 
-    --c-accent: 37 99 235;
-    --c-accent-hover: 29 78 216;
-    --c-accent-subtle: 30 58 138;
+    --c-accent: 116 130 246;
+    --c-accent-hover: 98 112 232;
+    --c-accent-subtle: 40 44 92;
 
-    --c-fg: 241 245 249;
-    --c-fg-secondary: 203 213 225;
-    --c-fg-muted: 148 163 184;
-    --c-fg-faint: 100 116 139;
-    --c-fg-inverse: 11 14 20;
+    --c-fg: 244 244 247;
+    --c-fg-secondary: 198 200 210;
+    --c-fg-muted: 142 145 158;
+    --c-fg-faint: 104 106 120;
+    --c-fg-inverse: 9 9 11;
 
     --c-success: 52 211 153;
     --c-warning: 251 191 36;
     --c-danger: 251 113 133;
-    --c-info: 96 165 250;
-    --c-neutral: 148 163 184;
+    --c-info: 129 140 248;
+    --c-neutral: 142 145 158;
 
-    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4);
-    --shadow-elevated: 0 16px 40px -18px rgba(0, 0, 0, 0.75), 0 2px 8px -4px rgba(0, 0, 0, 0.5);
-    --shadow-depth-hover: 0 0 0 1px rgb(var(--c-accent) / 0.35), 0 18px 40px -20px rgba(0, 0, 0, 0.8);
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.5);
+    --shadow-elevated: 0 24px 60px -24px rgba(0, 0, 0, 0.85), 0 2px 8px -4px rgba(0, 0, 0, 0.6);
+    --shadow-depth-hover: 0 0 0 1px rgb(var(--c-accent) / 0.3), 0 20px 46px -22px rgba(0, 0, 0, 0.85);
 
-    --grid-line: rgba(255, 255, 255, 0.025);
-    --grid-line-far: rgba(255, 255, 255, 0.014);
-    --ambient-1: rgba(37, 99, 235, 0.08);
-    --ambient-2: rgba(37, 99, 235, 0.04);
-    --vignette: rgba(0, 0, 0, 0.55);
+    --grid-line: rgba(255, 255, 255, 0.02);
+    --grid-line-far: rgba(255, 255, 255, 0.011);
+    --ambient-1: rgba(116, 130, 246, 0.07);
+    --ambient-2: rgba(116, 130, 246, 0.03);
+    --vignette: rgba(0, 0, 0, 0.78);
+    --light-cone: rgba(232, 236, 255, 0.05);
+    --hairline: rgba(255, 255, 255, 0.07);
 
-    /* Film grain — cinematic operations chamber: stronger */
-    --grain-opacity: 0.055;
+    /* Film grain — cinematic operations chamber: fine + present */
+    --grain-opacity: 0.085;
     --grain-blend: overlay;
 
     /* State-driven atmospheric glow (radial wash tints) */
-    --glow-info: rgba(96, 165, 250, 0.14);
+    --glow-info: rgba(129, 140, 248, 0.15);
     --glow-success: rgba(52, 211, 153, 0.13);
     --glow-warning: rgba(251, 191, 36, 0.12);
     --glow-danger: rgba(251, 113, 133, 0.13);
 
-    --scrollbar-track: 11 14 20;
-    --scrollbar-thumb: 30 38 56;
-    --scrollbar-thumb-hover: 44 56 82;
+    --scrollbar-track: 9 9 11;
+    --scrollbar-thumb: 32 32 39;
+    --scrollbar-thumb-hover: 52 53 63;
 
     color-scheme: dark;
   }
 
+  html {
+    overflow-x: hidden;
+  }
   body {
     background-color: rgb(var(--c-bg));
     color: rgb(var(--c-fg));
     font-family: var(--font-sans), "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    overflow-x: hidden;
   }
 
   /* Theme transition — only colour props, only when the class actually flips */
@@ -180,7 +188,24 @@
 /* ---- Depth system --------------------------------------------------- */
 @layer components {
   .depth-card {
-    @apply bg-surface border border-border rounded-lg shadow-card transition-all duration-150 ease-spatial;
+    @apply bg-surface border border-border rounded-xl shadow-card transition-all duration-150 ease-spatial;
+  }
+  /* 1px hairline divider — the reference's row/section separator */
+  .hairline {
+    border: 0;
+    border-top: 1px solid var(--hairline);
+  }
+  .border-hairline {
+    border-color: var(--hairline) !important;
+  }
+  /* Recessive mono label — used above every KPI / section */
+  .label-mono {
+    font-family: var(--font-mono), "JetBrains Mono", monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.13em;
+    font-size: 12px;
+    line-height: 1.4;
+    color: rgb(var(--c-fg-faint));
   }
   .depth-card-hover {
     @apply hover:-translate-y-px hover:border-accent/30 hover:shadow-depth-hover;
@@ -215,8 +240,8 @@
     pointer-events: none;
     opacity: var(--grain-opacity);
     mix-blend-mode: var(--grain-blend);
-    background-image: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-    background-size: 160px 160px;
+    background-image: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.92' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    background-size: 180px 180px;
   }
 
   /* State-tinted atmospheric wash — <AtmosphericGlow tone="..."/>. */
@@ -236,17 +261,17 @@
   /* Oversized editorial display type — used sparingly for hero figures. */
   .display-xl {
     font-family: var(--font-sans), "Inter", sans-serif;
-    font-size: clamp(2.5rem, 6vw, 4.75rem);
-    line-height: 0.95;
-    letter-spacing: -0.03em;
+    font-size: clamp(2.75rem, 6.5vw, 5.25rem);
+    line-height: 0.92;
+    letter-spacing: -0.038em;
     font-weight: 700;
     text-wrap: balance;
   }
   .display-lg {
     font-family: var(--font-sans), "Inter", sans-serif;
-    font-size: clamp(1.75rem, 3.6vw, 2.75rem);
-    line-height: 1;
-    letter-spacing: -0.022em;
+    font-size: clamp(1.9rem, 3.8vw, 3rem);
+    line-height: 0.98;
+    letter-spacing: -0.03em;
     font-weight: 700;
     text-wrap: balance;
   }
@@ -255,11 +280,11 @@
     letter-spacing: 0.08em;
   }
 
-  /* Dark-mode-only state edge glow for live cards. */
-  :root.dark .glow-info    { box-shadow: var(--shadow-card), 0 0 0 1px rgb(var(--c-info) / 0.14), 0 8px 34px -18px rgb(var(--c-info) / 0.5); }
-  :root.dark .glow-success { box-shadow: var(--shadow-card), 0 0 0 1px rgb(var(--c-success) / 0.16), 0 8px 34px -18px rgb(var(--c-success) / 0.5); }
-  :root.dark .glow-warning { box-shadow: var(--shadow-card), 0 0 0 1px rgb(var(--c-warning) / 0.16), 0 8px 34px -18px rgb(var(--c-warning) / 0.45); }
-  :root.dark .glow-danger  { box-shadow: var(--shadow-card), 0 0 0 1px rgb(var(--c-danger) / 0.16), 0 8px 34px -18px rgb(var(--c-danger) / 0.5); }
+  /* Dark-mode-only state glow for live cards — a whisper, not a highlight. */
+  :root.dark .glow-info    { box-shadow: var(--shadow-card), 0 10px 40px -22px rgb(var(--c-info) / 0.4); }
+  :root.dark .glow-success { box-shadow: var(--shadow-card), 0 10px 40px -22px rgb(var(--c-success) / 0.38); }
+  :root.dark .glow-warning { box-shadow: var(--shadow-card), 0 10px 40px -22px rgb(var(--c-warning) / 0.34); }
+  :root.dark .glow-danger  { box-shadow: var(--shadow-card), 0 10px 40px -22px rgb(var(--c-danger) / 0.4); }
 }
 
 /* ---- Spatial / 3D utilities --------------------------------------- */

@@ -2,6 +2,7 @@ import React from "react";
 import { cn, formatINR } from "@/lib/utils";
 import { LucideIcon } from "lucide-react";
 import { DepthCard } from "@/components/spatial/DepthCard";
+import { AnimatedNumber } from "@/components/ui/AnimatedNumber";
 
 interface StatCardProps {
   title: string;
@@ -14,6 +15,27 @@ interface StatCardProps {
   className?: string;
 }
 
+const glowFor: Record<string, "info" | "success" | "warning" | "danger" | undefined> = {
+  danger: "danger",
+  success: "success",
+  warning: "warning",
+  info: "info",
+  default: undefined,
+};
+
+const valueTone: Record<string, string> = {
+  default: "text-fg",
+  danger: "text-status-danger",
+  success: "text-status-success",
+  warning: "text-status-warning",
+  info: "text-status-info",
+};
+
+/**
+ * KPI surface in the reference's editorial style: a tiny recessive mono label
+ * above, an oversized figure below, a faint mono sub-line. The value animates
+ * only when the real number changes.
+ */
 export function StatCard({
   title,
   value,
@@ -24,52 +46,57 @@ export function StatCard({
   trend,
   className,
 }: StatCardProps) {
-  const formattedValue = isCurrency ? formatINR(value) : value.toLocaleString();
-
-  const variantBorders = {
-    default: "hover:border-border-highlight",
-    danger: "border-status-danger-border/40 hover:border-status-danger-border",
-    success: "border-status-success-border/40 hover:border-status-success-border",
-    warning: "border-status-warning-border/40 hover:border-status-warning-border",
-    info: "border-status-info-border/40 hover:border-status-info-border",
-  };
-
-  const iconColors = {
-    default: "text-fg-muted bg-surface-subtle",
-    danger: "text-status-danger bg-status-danger-bg",
-    success: "text-status-success bg-status-success-bg",
-    warning: "text-status-warning bg-status-warning-bg",
-    info: "text-status-info bg-status-info-bg",
-  };
+  const numeric =
+    typeof value === "number" ||
+    (typeof value === "string" && value.trim() !== "" && !isNaN(Number(value)));
 
   return (
     <DepthCard
       highlight
+      glow={glowFor[variant]}
       className={cn(
-        "p-5 flex flex-col justify-between hover:-translate-y-px",
-        variantBorders[variant],
+        "flex flex-col gap-4 p-5 transition-transform hover:-translate-y-px hover:border-border-highlight",
         className
       )}
     >
-      <div className="flex items-center justify-between">
-        <span className="text-xs font-mono uppercase tracking-wider text-fg-muted font-medium">
-          {title}
-        </span>
+      <div className="flex items-start justify-between">
+        <span className="label-mono">{title}</span>
         {Icon && (
-          <div className={cn("p-2 rounded-md", iconColors[variant])}>
-            <Icon className="w-4 h-4" />
-          </div>
+          <Icon
+            className={cn(
+              "h-4 w-4 shrink-0 opacity-70",
+              variant === "default" ? "text-fg-faint" : valueTone[variant]
+            )}
+          />
         )}
       </div>
 
-      <div className="mt-4">
-        <div className="text-2xl lg:text-3xl font-bold tracking-tight text-fg tabular-nums">
-          {formattedValue}
+      <div>
+        <div
+          className={cn(
+            "text-2xl font-bold leading-none tracking-tight tabular-nums sm:text-[1.7rem] lg:text-[2rem]",
+            valueTone[variant]
+          )}
+        >
+          {numeric ? (
+            <AnimatedNumber
+              value={value}
+              format={
+                isCurrency
+                  ? (n) => formatINR(n)
+                  : (n) => Math.round(n).toLocaleString()
+              }
+            />
+          ) : isCurrency ? (
+            formatINR(value)
+          ) : (
+            value
+          )}
         </div>
         {(subtitle || trend) && (
-          <div className="mt-2 flex items-center justify-between text-xs text-fg-muted">
+          <div className="mt-2.5 flex items-center justify-between font-mono text-xs text-fg-faint">
             {subtitle && <span>{subtitle}</span>}
-            {trend && <span className="font-mono text-fg-faint">{trend}</span>}
+            {trend && <span>{trend}</span>}
           </div>
         )}
       </div>

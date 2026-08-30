@@ -4,7 +4,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 
-interface RevealProps {
+interface RevealProps extends React.HTMLAttributes<HTMLElement> {
   children: React.ReactNode;
   className?: string;
   /** ms delay before the transition starts (used for light stagger). */
@@ -22,6 +22,7 @@ export function Reveal({
   className,
   delay = 0,
   as = "div",
+  ...rest
 }: RevealProps) {
   const Tag = as as any;
   const ref = useRef<HTMLElement | null>(null);
@@ -66,6 +67,7 @@ export function Reveal({
             ),
         className
       )}
+      {...rest}
     >
       {children}
     </Tag>

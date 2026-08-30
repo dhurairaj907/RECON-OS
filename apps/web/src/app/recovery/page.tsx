@@ -2,16 +2,35 @@
 
 import React, { useState } from "react";
 import useSWR from "swr";
-import { Search, ShieldAlert, ChevronLeft, ChevronRight } from "lucide-react";
+import { Search, ShieldAlert, ChevronLeft, ChevronRight, TrendingDown, CheckCircle2 } from "lucide-react";
 import { AppShell } from "@/components/layout/AppShell";
 import { StatusBadge } from "@/components/ui/StatusBadge";
+import { StatCard } from "@/components/ui/StatCard";
 import { DetailDrawer } from "@/components/layout/DetailDrawer";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonRow } from "@/components/ui/SkeletonLoader";
+import { SkeletonCards } from "@/components/ui/SkeletonLoader";
 import { IntelligencePanel } from "@/components/modules/IntelligencePanel";
+import { CaseHeader } from "@/components/modules/CaseHeader";
+import { Reveal } from "@/components/spatial/Reveal";
+import { SectionBand } from "@/components/modules/SectionBand";
+import type { GlowTone } from "@/components/spatial/AtmosphericGlow";
 import { api } from "@/lib/api";
-import { RecoveryCase, PaginatedResponse } from "@/lib/types";
-import { formatINR, formatDateTime, formatRelativeTime } from "@/lib/utils";
+import { RecoveryCase, PaginatedResponse, DashboardMetrics } from "@/lib/types";
+import { cn, formatINR, formatDateTime, formatRelativeTime } from "@/lib/utils";
+
+const priorityTone: Record<string, GlowTone> = {
+  CRITICAL: "danger",
+  HIGH: "warning",
+  MEDIUM: "info",
+  LOW: "info",
+};
+
+function caseTone(c: RecoveryCase | null): GlowTone {
+  if (!c) return "idle";
+  if ((c.status || "").toUpperCase() === "RESOLVED") return "success";
+  return priorityTone[c.priority] || "info";
+}
 
 export default function RecoveryCasesPage() {
   const [page, setPage] = useState(1);
@@ -33,37 +52,74 @@ export default function RecoveryCasesPage() {
     { refreshInterval: 3000 }
   );
 
+  const { data: metrics } = useSWR<DashboardMetrics>(
+    "/api/v1/dashboard/metrics",
+    () => api.getDashboardMetrics(),
+    { refreshInterval: 5000 }
+  );
+
   const totalPages = data ? Math.ceil(data.total / 15) : 1;
   const isLoading = !data && !error;
 
-  return (
-    <AppShell onRefresh={() => mutate()} isRefreshing={isValidating}>
-      {/* Page Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-border pb-6">
-        <div>
-          <div className="flex items-center space-x-2">
-            <ShieldAlert className="w-4 h-4 text-status-warning" />
-            <span className="text-xs font-mono tracking-wider text-fg-muted uppercase">
-              Case Management
-            </span>
-          </div>
-          <h1 className="text-2xl font-bold tracking-tight text-fg font-mono mt-1">
-            RECOVERY CASES
-          </h1>
-          <p className="text-xs text-fg-muted mt-1">
-            Active and resolved recovery cases automatically generated from payment failures.
-          </p>
-        </div>
+  const pageTone: GlowTone = selectedCase
+    ? caseTone(selectedCase)
+    : (data?.items || []).some(
+        (c) => c.priority === "CRITICAL" && (c.status || "").toUpperCase() !== "RESOLVED"
+      )
+    ? "danger"
+    : (data?.items || []).some((c) => (c.status || "").toUpperCase() !== "RESOLVED")
+    ? "warning"
+    : "idle";
 
+  return (
+    <AppShell onRefresh={() => mutate()} isRefreshing={isValidating} tone={pageTone}>
+      <SectionBand
+        eyebrow="CASE MANAGEMENT"
+        title="RECOVERY CASES"
+        subtitle="Active and resolved recovery cases automatically generated from payment failures."
+      />
+
+      <div className="flex items-center justify-end">
         <div className="text-xs font-mono text-fg-muted bg-surface px-3 py-1.5 rounded-lg border border-border">
           Total Cases: <span className="text-fg font-bold">{data?.total || 0}</span>
         </div>
       </div>
 
-      {/* Filter & Search Bar */}
-      <div className="bg-surface p-4 rounded-lg border border-border flex flex-col md:flex-row items-center justify-between gap-3">
+      {/* Case Network — live system-wide aggregates, not the paginated table below */}
+      {!metrics ? (
+        <SkeletonCards count={3} />
+      ) : (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <StatCard
+            title="Revenue at Risk"
+            value={metrics.revenue_at_risk}
+            isCurrency
+            icon={TrendingDown}
+            variant="danger"
+            subtitle="Across all open cases"
+          />
+          <StatCard
+            title="Active Recovery Cases"
+            value={metrics.active_recovery_cases}
+            icon={ShieldAlert}
+            variant="warning"
+            subtitle="DETECTED + OPEN"
+          />
+          <StatCard
+            title="Needs Approval"
+            value={metrics.intelligence?.needs_approval ?? "—"}
+            icon={CheckCircle2}
+            variant="info"
+            subtitle="Policy verdict pending a human"
+          />
+        </div>
+      )}
+
+      {/* Filter bar + table stay visually tight to each other — one operational unit */}
+      <div className="space-y-3">
+      <div className="rounded-2xl border border-border bg-surface/60 p-4 backdrop-blur-sm flex flex-col md:flex-row items-center justify-between gap-3">
         <div className="relative flex-1 w-full">
-          <Search className="w-4 h-4 absolute left-3 top-2.5 text-fg-faint" />
+          <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-fg-faint" />
           <input
             type="text"
             placeholder="Search by case number (e.g. RC-10001) or failure reason..."
@@ -72,7 +128,7 @@ export default function RecoveryCasesPage() {
               setSearchQuery(e.target.value);
               setPage(1);
             }}
-            className="w-full bg-surface-subtle border border-border rounded-lg pl-9 pr-4 py-1.5 text-xs text-fg placeholder-fg-faint focus:outline-none focus:border-accent"
+            className="w-full h-11 bg-surface-subtle border border-border rounded-lg pl-10 pr-4 text-sm text-fg placeholder-fg-faint focus:outline-none focus:border-accent"
           />
         </div>
 
@@ -84,7 +140,7 @@ export default function RecoveryCasesPage() {
               setStatusFilter(e.target.value);
               setPage(1);
             }}
-            className="bg-surface-subtle border border-border rounded-lg px-3 py-1.5 text-xs text-fg-secondary focus:outline-none focus:border-accent font-mono"
+            className="h-11 bg-surface-subtle border border-border rounded-lg px-3.5 text-sm text-fg-secondary focus:outline-none focus:border-accent font-mono"
           >
             <option value="">All Statuses</option>
             <option value="DETECTED">DETECTED</option>
@@ -100,7 +156,7 @@ export default function RecoveryCasesPage() {
               setPriorityFilter(e.target.value);
               setPage(1);
             }}
-            className="bg-surface-subtle border border-border rounded-lg px-3 py-1.5 text-xs text-fg-secondary focus:outline-none focus:border-accent font-mono"
+            className="h-11 bg-surface-subtle border border-border rounded-lg px-3.5 text-sm text-fg-secondary focus:outline-none focus:border-accent font-mono"
           >
             <option value="">All Priorities</option>
             <option value="CRITICAL">CRITICAL (&ge; ₹50k)</option>
@@ -112,7 +168,7 @@ export default function RecoveryCasesPage() {
       </div>
 
       {/* Recovery Cases Table */}
-      <div className="bg-surface rounded-lg border border-border overflow-hidden">
+      <div className="overflow-hidden rounded-2xl border border-border bg-surface/60 backdrop-blur-sm">
         {isLoading ? (
           <div className="p-4 space-y-2">
             <SkeletonRow cols={8} />
@@ -129,46 +185,52 @@ export default function RecoveryCasesPage() {
         ) : (
           <>
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-surface-elevated/50 text-fg-muted font-mono text-[11px] uppercase border-b border-border">
+              <table className="w-full text-left text-sm">
+                <thead className="sticky top-0 z-10 bg-surface-elevated/80 font-mono text-xs uppercase tracking-[0.08em] text-fg-faint border-b border-hairline backdrop-blur-sm">
                   <tr>
-                    <th className="py-3 px-4">Case #</th>
-                    <th className="py-3 px-4">Customer</th>
-                    <th className="py-3 px-4">Amount at Risk</th>
-                    <th className="py-3 px-4">Recovered</th>
-                    <th className="py-3 px-4">Priority</th>
-                    <th className="py-3 px-4">Status</th>
-                    <th className="py-3 px-4">Intelligence</th>
-                    <th className="py-3 px-4">Failure Reason</th>
-                    <th className="py-3 px-4 text-right">Age</th>
+                    <th className="py-4 px-4">Case #</th>
+                    <th className="py-4 px-4">Customer</th>
+                    <th className="py-4 px-4">Amount at Risk</th>
+                    <th className="py-4 px-4">Recovered</th>
+                    <th className="py-4 px-4">Priority</th>
+                    <th className="py-4 px-4">Status</th>
+                    <th className="py-4 px-4">Intelligence</th>
+                    <th className="py-4 px-4">Failure Reason</th>
+                    <th className="py-4 px-4 text-right">Age</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-border/60">
+                <tbody className="divide-y divide-hairline">
                   {data.items.map((c) => (
-                    <tr
+                    <Reveal
                       key={c.id}
+                      as="tr"
                       onClick={() => setSelectedCase(c)}
-                      className="hover:bg-surface-elevated/40 cursor-pointer transition-colors"
+                      className={cn(
+                        "group cursor-pointer border-l-2 border-transparent transition-colors hover:bg-surface-elevated/40",
+                        c.priority === "CRITICAL" && "hover:border-status-danger",
+                        c.priority === "HIGH" && "hover:border-status-warning",
+                        (c.status || "").toUpperCase() === "RESOLVED" && "hover:border-status-success"
+                      )}
                     >
-                      <td className="py-3 px-4 font-mono font-medium text-status-info">
+                      <td className="py-4 px-4 font-mono font-medium text-status-info">
                         {c.case_number}
                       </td>
-                      <td className="py-3 px-4 text-fg">
+                      <td className="py-4 px-4 text-fg">
                         {c.customer?.name || c.customer?.email || "Unknown Customer"}
                       </td>
-                      <td className="py-3 px-4 font-mono font-semibold text-status-danger tabular-nums">
+                      <td className="py-4 px-4 font-mono font-semibold text-status-danger tabular-nums">
                         {formatINR(c.amount_at_risk)}
                       </td>
-                      <td className="py-3 px-4 font-mono text-status-success tabular-nums">
+                      <td className="py-4 px-4 font-mono text-status-success tabular-nums">
                         {formatINR(c.amount_recovered)}
                       </td>
-                      <td className="py-3 px-4">
+                      <td className="py-4 px-4">
                         <StatusBadge status={c.priority} type="priority" />
                       </td>
-                      <td className="py-3 px-4">
+                      <td className="py-4 px-4">
                         <StatusBadge status={c.status} type="case" />
                       </td>
-                      <td className="py-3 px-4 font-mono text-[11px]">
+                      <td className="py-4 px-4 font-mono text-[11px]">
                         {c.intelligence ? (
                           <div className="flex flex-col gap-0.5">
                             <span
@@ -193,13 +255,13 @@ export default function RecoveryCasesPage() {
                           <span className="text-fg-faint">not analyzed</span>
                         )}
                       </td>
-                      <td className="py-3 px-4 text-fg-muted truncate max-w-xs">
+                      <td className="py-4 px-4 text-fg-muted truncate max-w-xs">
                         {c.failure_reason || "N/A"}
                       </td>
-                      <td className="py-3 px-4 text-right font-mono text-fg-muted">
+                      <td className="py-4 px-4 text-right font-mono text-fg-muted">
                         {formatRelativeTime(c.opened_at)}
                       </td>
-                    </tr>
+                    </Reveal>
                   ))}
                 </tbody>
               </table>
@@ -215,14 +277,14 @@ export default function RecoveryCasesPage() {
                 <button
                   disabled={page <= 1}
                   onClick={() => setPage((p) => Math.max(1, p - 1))}
-                  className="p-1 rounded bg-surface border border-border disabled:opacity-40 hover:bg-surface-elevated text-fg-secondary"
+                  className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface border border-border disabled:opacity-40 hover:bg-surface-elevated text-fg-secondary"
                 >
                   <ChevronLeft className="w-4 h-4" />
                 </button>
                 <button
                   disabled={page >= totalPages}
                   onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                  className="p-1 rounded bg-surface border border-border disabled:opacity-40 hover:bg-surface-elevated text-fg-secondary"
+                  className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface border border-border disabled:opacity-40 hover:bg-surface-elevated text-fg-secondary"
                 >
                   <ChevronRight className="w-4 h-4" />
                 </button>
@@ -230,6 +292,7 @@ export default function RecoveryCasesPage() {
             </div>
           </>
         )}
+      </div>
       </div>
 
       {/* Case Detail Drawer */}
@@ -242,21 +305,26 @@ export default function RecoveryCasesPage() {
       >
         {selectedCase && (
           <div className="space-y-6 text-xs">
-            {/* Financial Overview */}
-            <div className="grid grid-cols-2 gap-4 p-4 rounded-lg bg-surface-subtle border border-border">
-              <div>
-                <span className="text-fg-muted font-mono">Amount at Risk</span>
-                <div className="text-xl font-bold font-mono text-status-danger mt-1">
-                  {formatINR(selectedCase.amount_at_risk)}
-                </div>
-              </div>
-              <div>
-                <span className="text-fg-muted font-mono">Amount Recovered</span>
-                <div className="text-xl font-bold font-mono text-status-success mt-1">
-                  {formatINR(selectedCase.amount_recovered)}
-                </div>
-              </div>
-            </div>
+            <CaseHeader
+              caseNumber={selectedCase.case_number}
+              amountAtRisk={selectedCase.amount_at_risk}
+              amountRecovered={selectedCase.amount_recovered}
+              failureCode={selectedCase.failure_code}
+              failureReason={selectedCase.failure_reason}
+              tone={
+                (selectedCase.status || "").toUpperCase() === "RESOLVED"
+                  ? "success"
+                  : selectedCase.priority === "CRITICAL"
+                  ? "danger"
+                  : selectedCase.priority === "HIGH"
+                  ? "warning"
+                  : "info"
+              }
+              recovered={
+                (selectedCase.status || "").toUpperCase() === "RESOLVED" &&
+                Number(selectedCase.amount_recovered) > 0
+              }
+            />
 
             {/* Diagnostic Details */}
             <div className="space-y-3">
