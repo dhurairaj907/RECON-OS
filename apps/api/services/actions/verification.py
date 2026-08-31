@@ -157,6 +157,19 @@ def apply_recovery(
     logger.info("Recovery %sVERIFIED for %s via %s",
                 "(SIMULATED) " if simulated else "",
                 case.case_number if case else action.recovery_case_id, source_event_id)
+
+    # Phase 7: controlled automatic thank-you communication (advisory, off by
+    # default, never able to affect the verified outcome above — see
+    # services/communications/automation.py). Never sent for a simulated
+    # recovery, which is not a real customer payment.
+    if case is not None and not simulated:
+        try:
+            from services.communications.automation import on_recovery_verified
+            on_recovery_verified(db, merchant_id=action.merchant_id, case=case, action=action)
+        except Exception:
+            logger.exception("Automatic post-recovery communication hook failed for %s (non-fatal)",
+                            action.reference_id)
+
     return action
 
 

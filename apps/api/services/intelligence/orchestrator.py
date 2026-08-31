@@ -22,6 +22,7 @@ import database
 from config import settings
 from models.audit_log import AuditLog
 from models.case_intelligence import CaseIntelligence
+from models.customer import Customer
 from models.recovery_case import RecoveryCase
 from schemas.intelligence import VERDICT_TO_STATUS
 from services.intelligence.ai_diagnosis import diagnose_case
@@ -163,6 +164,35 @@ def run_intelligence(db, case_id, *, trigger: str = "manual") -> CaseIntelligenc
              "allowed_actions": [a.value for a in policy.allowed_actions]},
         )
 
+        # --- Phase 6: advisory ML predictions (never influence the verdict above) ---
+        # Deliberately computed AFTER the deterministic policy verdict and never
+        # fed back into it — these are attached as extra context only. A
+        # failure here can never break the deterministic pipeline.
+        ml_predictions = None
+        try:
+            from ai.inference.service import predict_for_case
+
+            customer_dict = None
+            if case.customer_id is not None:
+                customer = db.query(Customer).filter(Customer.id == case.customer_id).first()
+                if customer is not None:
+                    customer_dict = {
+                        "email": customer.email, "phone": customer.phone,
+                        "opted_out_channels": customer.opted_out_channels,
+                    }
+            ml_predictions = predict_for_case(ctx, failure_category=diagnosis.failure_category.value, customer=customer_dict)
+            models_used = sorted(
+                v.get("model_name", k) for k, v in ml_predictions.items() if isinstance(v, dict) and "model_name" in v
+            )
+            _audit(
+                db, merchant_id, case.id, "ML_INFERENCE", "ML_PREDICTIONS_COMPLETED",
+                f"Advisory ML predictions attached for {case.case_number}: {', '.join(models_used) or 'no models available'}",
+                {"models_used": models_used, "feature_version": ml_predictions.get("feature_version")},
+            )
+        except Exception:
+            logger.exception("ML inference failed for case %s (non-fatal, deterministic pipeline unaffected)", case.id)
+            ml_predictions = None
+
         lifecycle_status = VERDICT_TO_STATUS[policy.verdict.value]
 
         ci = CaseIntelligence(
@@ -178,6 +208,7 @@ def run_intelligence(db, case_id, *, trigger: str = "manual") -> CaseIntelligenc
             prediction_json=prediction.model_dump(mode="json"),
             strategy_json=strategy.model_dump(mode="json"),
             policy_json=policy.model_dump(mode="json"),
+            ml_predictions_json=ml_predictions,
             failure_category=diagnosis.failure_category.value,
             recovery_probability=prediction.recovery_probability,
             prediction_band=prediction.band.value,

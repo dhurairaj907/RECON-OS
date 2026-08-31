@@ -9,7 +9,8 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 
-from database import get_db, seed_default_merchant
+from auth import AuthContext, get_auth_context
+from database import get_db, get_org_merchant
 from models.audit_log import AuditLog
 from schemas.audit_log import AuditLogResponse, AuditLogListResponse
 
@@ -23,12 +24,13 @@ def list_audit_logs(
     action: Optional[str] = Query(None, description="Filter by action"),
     actor: Optional[str] = Query(None, description="Filter by actor"),
     search: Optional[str] = Query(None, description="Search in detail text"),
+    ctx: AuthContext = Depends(get_auth_context),
     db: Session = Depends(get_db),
 ):
     """
     Returns a paginated list of audit records for full operational transparency.
     """
-    merchant = seed_default_merchant(db)
+    merchant = get_org_merchant(db, ctx.organization)
     query = db.query(AuditLog).filter(AuditLog.merchant_id == merchant.id)
 
     if action:

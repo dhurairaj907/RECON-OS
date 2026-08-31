@@ -11,7 +11,8 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import desc
 
-from database import get_db, seed_default_merchant
+from auth import AuthContext, get_auth_context
+from database import get_db, get_org_merchant
 from models.recovery_case import RecoveryCase
 from models.case_intelligence import CaseIntelligence
 from schemas.recovery_case import RecoveryCaseResponse, RecoveryCaseListResponse
@@ -74,12 +75,13 @@ def list_recovery_cases(
     status: Optional[str] = Query(None, description="Filter by case status (DETECTED, OPEN, RESOLVED, CLOSED)"),
     priority: Optional[str] = Query(None, description="Filter by priority (LOW, MEDIUM, HIGH, CRITICAL)"),
     search: Optional[str] = Query(None, description="Search by case number or failure reason"),
+    ctx: AuthContext = Depends(get_auth_context),
     db: Session = Depends(get_db),
 ):
     """
     Returns a paginated list of recovery cases with associated customer and payment data.
     """
-    merchant = seed_default_merchant(db)
+    merchant = get_org_merchant(db, ctx.organization)
     query = db.query(RecoveryCase).options(
         joinedload(RecoveryCase.customer),
         joinedload(RecoveryCase.payment)
@@ -114,11 +116,11 @@ def list_recovery_cases(
 
 
 @router.get("/{case_id}", response_model=RecoveryCaseResponse)
-def get_recovery_case(case_id: str, db: Session = Depends(get_db)):
+def get_recovery_case(case_id: str, ctx: AuthContext = Depends(get_auth_context), db: Session = Depends(get_db)):
     """
     Get a single recovery case by internal UUID or Case Number (e.g. RC-10001).
     """
-    merchant = seed_default_merchant(db)
+    merchant = get_org_merchant(db, ctx.organization)
     query = db.query(RecoveryCase).options(
         joinedload(RecoveryCase.customer),
         joinedload(RecoveryCase.payment)

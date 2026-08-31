@@ -10,7 +10,8 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 
-from database import get_db, seed_default_merchant
+from auth import AuthContext, get_auth_context
+from database import get_db, get_org_merchant
 from models.payment import Payment
 from schemas.payment import PaymentResponse, PaymentListResponse
 
@@ -24,12 +25,13 @@ def list_payments(
     status_filter: Optional[str] = Query(None, alias="status", description="Filter by payment status"),
     method: Optional[str] = Query(None, description="Filter by payment method"),
     search: Optional[str] = Query(None, description="Search by payment ID or order ID"),
+    ctx: AuthContext = Depends(get_auth_context),
     db: Session = Depends(get_db),
 ):
     """
     Returns a paginated list of payments with optional status/method filtering.
     """
-    merchant = seed_default_merchant(db)
+    merchant = get_org_merchant(db, ctx.organization)
     query = db.query(Payment).filter(Payment.merchant_id == merchant.id)
 
     if status_filter:
@@ -54,11 +56,11 @@ def list_payments(
 
 
 @router.get("/{payment_id}", response_model=PaymentResponse)
-def get_payment(payment_id: str, db: Session = Depends(get_db)):
+def get_payment(payment_id: str, ctx: AuthContext = Depends(get_auth_context), db: Session = Depends(get_db)):
     """
     Get a single payment record by internal UUID or Razorpay payment ID.
     """
-    merchant = seed_default_merchant(db)
+    merchant = get_org_merchant(db, ctx.organization)
     query = db.query(Payment).filter(Payment.merchant_id == merchant.id)
 
     try:

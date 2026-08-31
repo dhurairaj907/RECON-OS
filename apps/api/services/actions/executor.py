@@ -263,6 +263,17 @@ def execute_action(db: Session, action_id) -> RecoveryAction:
     db.commit()
     db.refresh(action)
     logger.info("Payment Link created for %s: %s", case.case_number, result.payment_link_id)
+
+    # Phase 7: controlled automatic communication (advisory, off by default,
+    # never able to affect the execution result above — see
+    # services/communications/automation.py). A failure here is caught inside
+    # the hook itself and can never surface as an execution failure.
+    try:
+        from services.communications.automation import on_action_executed
+        on_action_executed(db, merchant_id=action.merchant_id, case=case, action=action)
+    except Exception:
+        logger.exception("Automatic communication hook failed for %s (non-fatal)", action.reference_id)
+
     return action
 
 

@@ -452,3 +452,87 @@ export interface PolicyOverview {
   editable: boolean;
   note: string;
 }
+
+/* ------------------------------------------------------------------ */
+/* Phase 5 — Identity, RBAC, Communications                             */
+/* ------------------------------------------------------------------ */
+
+export type UserRole = "ADMIN" | "OPERATOR" | "APPROVER" | "VIEWER";
+
+export interface AuthUser {
+  id: string;
+  email: string;
+  is_active: boolean;
+  created_at: string;
+  last_login_at?: string | null;
+}
+
+export interface AuthOrganization {
+  id: string;
+  name: string;
+  created_at: string;
+}
+
+export interface MeResponse {
+  user: AuthUser;
+  organization: AuthOrganization;
+  role: UserRole;
+}
+
+export interface MessageResponse {
+  ok: boolean;
+  message: string;
+}
+
+export interface OrgUser {
+  id: string;
+  email: string;
+  role: UserRole;
+  is_active: boolean;
+  created_at: string;
+  last_login_at?: string | null;
+}
+
+export interface OrgUserListResponse {
+  items: OrgUser[];
+  total: number;
+}
+
+export type CommunicationChannel = "EMAIL" | "SMS" | "WHATSAPP";
+export type CommunicationMessageType =
+  | "PAYMENT_FAILED"
+  | "PAYMENT_RECOVERY"
+  | "PAYMENT_LINK_CREATED"
+  | "PAYMENT_RECOVERED"
+  | "RECOVERY_REMINDER";
+
+export interface Communication {
+  id: string;
+  recovery_case_id: string;
+  recovery_action_id?: string | null;
+  channel: CommunicationChannel;
+  message_type: CommunicationMessageType;
+  status: "QUEUED" | "SENDING" | "SENT" | "DELIVERED" | "FAILED" | "SKIPPED" | "OPTED_OUT" | "CANCELLED" | string;
+  provider?: string | null;
+  recipient?: string | null;
+  subject?: string | null;
+  body?: string | null;
+  provider_message_id?: string | null;
+  error_code?: string | null;
+  error_message?: string | null;
+  skipped_reason?: string | null;
+  idempotency_key?: string | null;
+  created_at: string;
+  sent_at?: string | null;
+}
+
+export interface CommunicationListResponse {
+  items: Communication[];
+  total: number;
+}
+
+export interface SendCommunicationResponse {
+  ok: boolean;
+  message: string;
+  communication: Communication;
+}

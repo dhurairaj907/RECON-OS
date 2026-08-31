@@ -31,6 +31,11 @@ class Customer(Base):
     failed_payment_count = Column(Integer, default=0, nullable=False)
     last_payment_at = Column(DateTime(timezone=True), nullable=True)
 
+    # Phase 5: comma-separated channel names (e.g. "EMAIL,SMS") the customer
+    # has opted out of. Empty/NULL means no opt-outs. Never invented — only
+    # ever set by an explicit opt-out action.
+    opted_out_channels = Column(String(120), nullable=True)
+
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)

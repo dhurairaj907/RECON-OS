@@ -24,6 +24,35 @@ class StrategyPerformance(BaseModel):
     success_rate: float
 
 
+class ChannelPerformance(BaseModel):
+    channel: str
+    attempted: int
+    sent: int
+    delivered: int
+    failed: int
+
+
+class CommunicationAnalytics(BaseModel):
+    """
+    Phase 7: communication funnel metrics computed directly from persisted
+    Communication rows — never fabricated, never confusing "a message was
+    sent" with "revenue was recovered". `cases_with_communication` /
+    `cases_with_communication_recovered` are a real, computed CORRELATION
+    (cases that received at least one SENT/DELIVERED message before/at
+    recovery) — explicitly not a causal claim.
+    """
+    messages_attempted: int = 0
+    messages_sent: int = 0
+    messages_delivered: int = 0
+    messages_failed: int = 0
+    channel_performance: List[ChannelPerformance] = []
+
+    cases_with_communication: int = 0
+    cases_with_communication_recovered: int = 0
+    communication_to_recovery_rate: Optional[float] = None
+    recovery_value_from_communicated_cases: Decimal = Decimal("0.00")
+
+
 class AnalyticsMetrics(BaseModel):
     generated_at: datetime
 
@@ -61,3 +90,6 @@ class AnalyticsMetrics(BaseModel):
     # --- Coverage metadata (so the UI can label small-sample metrics honestly) ---
     cases_analyzed: int = 0
     actions_total: int = 0
+
+    # --- Phase 7: communications ---
+    communications: CommunicationAnalytics = CommunicationAnalytics()

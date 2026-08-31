@@ -10,7 +10,8 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 
-from database import get_db, seed_default_merchant
+from auth import AuthContext, get_auth_context
+from database import get_db, get_org_merchant
 from models.customer import Customer
 from schemas.customer import CustomerResponse, CustomerListResponse
 
@@ -22,12 +23,13 @@ def list_customers(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(20, ge=1, le=100, description="Items per page"),
     search: Optional[str] = Query(None, description="Search by name, email, or phone"),
+    ctx: AuthContext = Depends(get_auth_context),
     db: Session = Depends(get_db),
 ):
     """
     Returns a paginated list of customers with aggregates.
     """
-    merchant = seed_default_merchant(db)
+    merchant = get_org_merchant(db, ctx.organization)
     query = db.query(Customer).filter(Customer.merchant_id == merchant.id)
 
     if search:
@@ -52,11 +54,11 @@ def list_customers(
 
 
 @router.get("/{customer_id}", response_model=CustomerResponse)
-def get_customer(customer_id: str, db: Session = Depends(get_db)):
+def get_customer(customer_id: str, ctx: AuthContext = Depends(get_auth_context), db: Session = Depends(get_db)):
     """
     Get a customer profile by UUID or Razorpay customer ID.
     """
-    merchant = seed_default_merchant(db)
+    merchant = get_org_merchant(db, ctx.organization)
     query = db.query(Customer).filter(Customer.merchant_id == merchant.id)
 
     try:

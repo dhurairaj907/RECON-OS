@@ -12,6 +12,12 @@ from models.recovery_case import RecoveryCase
 from models.audit_log import AuditLog
 from models.case_intelligence import CaseIntelligence
 from models.recovery_action import RecoveryAction
+from models.organization import Organization
+from models.user import User
+from models.user_organization import UserOrganization
+from models.session import Session
+from models.password_reset_token import PasswordResetToken
+from models.communication import Communication
 
 __all__ = [
     "Merchant",
@@ -22,4 +28,10 @@ __all__ = [
     "AuditLog",
     "CaseIntelligence",
     "RecoveryAction",
+    "Organization",
+    "User",
+    "UserOrganization",
+    "Session",
+    "PasswordResetToken",
+    "Communication",
 ]

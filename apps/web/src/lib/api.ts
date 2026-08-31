@@ -16,6 +16,13 @@ import {
   ReconcileActionResponse,
   AnalyticsMetrics,
   PolicyOverview,
+  MeResponse,
+  MessageResponse,
+  OrgUserListResponse,
+  OrgUser,
+  Communication,
+  CommunicationListResponse,
+  SendCommunicationResponse,
 } from "./types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -29,7 +36,17 @@ async function fetcher<T>(endpoint: string, options?: RequestInit): Promise<T> {
       ...options?.headers,
     },
     cache: "no-store",
+    // Session auth is an httponly cookie — every request must carry it.
+    credentials: "include",
   });
+
+  if (res.status === 401 && typeof window !== "undefined" && !endpoint.startsWith("/api/v1/auth/")) {
+    // The backend is the sole authority here — this only redirects the UI;
+    // it never grants access. Avoid looping if already on the session page.
+    if (!window.location.pathname.startsWith("/session-expired") && !window.location.pathname.startsWith("/login")) {
+      window.location.href = "/session-expired";
+    }
+  }
 
   if (!res.ok) {
     let errorMessage = `API Error: ${res.status} ${res.statusText}`;
@@ -181,6 +198,32 @@ export const api = {
 
   // Policies (Phase 4 — PROVE)
   getPolicies: () => fetcher<PolicyOverview>("/api/v1/policies"),
+
+  // Auth (Phase 5)
+  register: (data: { email: string; password: string; organization_name: string }) =>
+    fetcher<MeResponse>("/api/v1/auth/register", { method: "POST", body: JSON.stringify(data) }),
+  login: (data: { email: string; password: string }) =>
+    fetcher<MeResponse>("/api/v1/auth/login", { method: "POST", body: JSON.stringify(data) }),
+  logout: () => fetcher<MessageResponse>("/api/v1/auth/logout", { method: "POST" }),
+  forgotPassword: (email: string) =>
+    fetcher<MessageResponse>("/api/v1/auth/forgot-password", { method: "POST", body: JSON.stringify({ email }) }),
+  resetPassword: (data: { token: string; new_password: string }) =>
+    fetcher<MessageResponse>("/api/v1/auth/reset-password", { method: "POST", body: JSON.stringify(data) }),
+  me: () => fetcher<MeResponse>("/api/v1/auth/me"),
+
+  // Users (Phase 5 — ADMIN only)
+  getOrgUsers: () => fetcher<OrgUserListResponse>("/api/v1/users"),
+  updateUserRole: (userId: string, role: string) =>
+    fetcher<OrgUser>(`/api/v1/users/${userId}/role`, { method: "PATCH", body: JSON.stringify({ role }) }),
+
+  // Communications (Phase 5)
+  getCaseCommunications: (caseId: string) =>
+    fetcher<CommunicationListResponse>(`/api/v1/recovery-cases/${caseId}/communications`),
+  sendCommunication: (caseId: string, channel: string, messageType: string) =>
+    fetcher<SendCommunicationResponse>(`/api/v1/recovery-cases/${caseId}/communications/send`, {
+      method: "POST",
+      body: JSON.stringify({ channel, message_type: messageType }),
+    }),
 
   // Health
   getHealth: () => fetcher<{ status: string; service: string; database: string }>("/api/v1/health"),

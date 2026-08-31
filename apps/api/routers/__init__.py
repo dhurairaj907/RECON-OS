@@ -15,6 +15,11 @@ from routers.intelligence import router as intelligence_router
 from routers.actions import router as actions_router
 from routers.analytics import router as analytics_router
 from routers.policies import router as policies_router
+from routers.auth import router as auth_router
+from routers.communications import router as communications_router
+from routers.users import router as users_router
+from routers.ai import router as ai_router
+from routers.communication_webhooks import router as communication_webhooks_router
 
 __all__ = [
     "webhooks_router",
@@ -30,4 +35,9 @@ __all__ = [
     "actions_router",
     "analytics_router",
     "policies_router",
+    "auth_router",
+    "communications_router",
+    "users_router",
+    "ai_router",
+    "communication_webhooks_router",
 ]

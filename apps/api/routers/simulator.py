@@ -13,8 +13,9 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from auth import AuthContext, ROLE_ADMIN, ROLE_OPERATOR, require_role
 from config import settings
-from database import get_db, seed_default_merchant
+from database import get_db, get_org_merchant
 from schemas.simulator import (
     SimulateEventRequest,
     SimulateEventResponse,
@@ -40,6 +41,7 @@ def _require_simulator_enabled():
 @router.post("/events", response_model=SimulateEventResponse, status_code=status.HTTP_201_CREATED)
 def trigger_simulated_event(
     request: SimulateEventRequest,
+    ctx: AuthContext = Depends(require_role(ROLE_OPERATOR, ROLE_ADMIN)),
     db: Session = Depends(get_db),
 ):
     """
@@ -48,7 +50,7 @@ def trigger_simulated_event(
     """
     _require_simulator_enabled()
     try:
-        merchant = seed_default_merchant(db)
+        merchant = get_org_merchant(db, ctx.organization)
         response = simulate_event(db=db, request=request, merchant_id=merchant.id)
         return response
     except Exception as e:
@@ -62,6 +64,7 @@ def trigger_simulated_event(
 @router.post("/payment-link-paid", response_model=SimulateEventResponse, status_code=status.HTTP_201_CREATED)
 def trigger_simulated_payment_link_paid(
     request: SimulatePaymentLinkPaidRequest,
+    ctx: AuthContext = Depends(require_role(ROLE_OPERATOR, ROLE_ADMIN)),
     db: Session = Depends(get_db),
 ):
     """
@@ -71,7 +74,7 @@ def trigger_simulated_payment_link_paid(
     """
     _require_simulator_enabled()
     try:
-        merchant = seed_default_merchant(db)
+        merchant = get_org_merchant(db, ctx.organization)
         return simulate_payment_link_paid(db=db, request=request, merchant_id=merchant.id)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))

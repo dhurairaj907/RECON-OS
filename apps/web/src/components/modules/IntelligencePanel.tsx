@@ -28,6 +28,7 @@ import { IntelligenceEnvelope, RecoveryAction } from "@/lib/types";
 import { cn, formatDateTime, formatINR } from "@/lib/utils";
 import { deriveCasePipeline, type StageStatus } from "@/components/spatial/pipeline-model";
 import { NumberedSteps, type NumberedStep } from "@/components/modules/NumberedSteps";
+import { CommunicationsSection } from "@/components/modules/CommunicationsSection";
 
 const RecoveryPipeline3D = dynamic(
   () =>
@@ -876,6 +877,9 @@ export function IntelligencePanel({ caseId, caseNumber }: Props) {
 
       {/* ACTION (Phase 3 — ACT) */}
       <ActionSection env={env} caseId={caseId} />
+
+      {/* COMMUNICATIONS (Phase 5) */}
+      <CommunicationsSection caseId={caseId} />
 
       {/* SOURCE */}
       <div className="border-t border-border/60 pt-3 flex flex-wrap items-center justify-between gap-1 text-[11px] font-mono text-fg-faint">

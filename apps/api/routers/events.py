@@ -10,7 +10,8 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 
-from database import get_db, seed_default_merchant
+from auth import AuthContext, get_auth_context
+from database import get_db, get_org_merchant
 from models.revenue_event import RevenueEvent
 from schemas.event import RevenueEventResponse, RevenueEventListResponse
 
@@ -24,12 +25,13 @@ def list_events(
     event_type: Optional[str] = Query(None, description="Filter by event type"),
     status: Optional[str] = Query(None, description="Filter by processing status"),
     search: Optional[str] = Query(None, description="Search by event ID"),
+    ctx: AuthContext = Depends(get_auth_context),
     db: Session = Depends(get_db),
 ):
     """
     Returns a paginated list of revenue events with optional filtering.
     """
-    merchant = seed_default_merchant(db)
+    merchant = get_org_merchant(db, ctx.organization)
     query = db.query(RevenueEvent).filter(RevenueEvent.merchant_id == merchant.id)
 
     if event_type:
@@ -51,11 +53,11 @@ def list_events(
 
 
 @router.get("/{event_id}", response_model=RevenueEventResponse)
-def get_event(event_id: str, db: Session = Depends(get_db)):
+def get_event(event_id: str, ctx: AuthContext = Depends(get_auth_context), db: Session = Depends(get_db)):
     """
     Get a single revenue event by internal UUID or Razorpay event ID.
     """
-    merchant = seed_default_merchant(db)
+    merchant = get_org_merchant(db, ctx.organization)
     query = db.query(RevenueEvent).filter(RevenueEvent.merchant_id == merchant.id)
 
     # Try matching UUID or razorpay_event_id

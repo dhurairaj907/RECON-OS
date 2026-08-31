@@ -4,7 +4,7 @@ import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import useSWR from "swr";
-import { Layers, Search, Menu, RefreshCw } from "lucide-react";
+import { Layers, Search, Menu, RefreshCw, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 import type { DashboardMetrics } from "@/lib/types";
@@ -195,6 +195,18 @@ export function TopNav({ onRefresh, isRefreshing, onMenuClick, transparentOverHe
           </div>
 
           <ThemeToggle />
+
+          <Link
+            href="/settings"
+            aria-label="Settings"
+            title="Account & organization settings"
+            className={cn(
+              "flex h-10 w-10 items-center justify-center rounded-lg border border-border bg-surface-subtle text-fg-muted transition-colors hover:text-fg",
+              pathname === "/settings" && "border-border-highlight text-fg"
+            )}
+          >
+            <Settings className="h-4 w-4" />
+          </Link>
 
           {metrics?.merchant_name && (
             <div className="hidden h-10 items-center gap-1.5 rounded-lg border border-border bg-surface-subtle px-3.5 font-mono text-xs text-fg-muted 2xl:flex">

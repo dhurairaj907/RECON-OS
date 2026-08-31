@@ -25,7 +25,20 @@ import database
 from database import Base, get_db
 from main import app
 from models.merchant import Merchant
+from models.organization import Organization
+from models.user import User
+from models.user_organization import UserOrganization
 from config import settings
+from auth import ROLE_ADMIN, hash_password
+
+# Known credentials for the auto-authenticated default test user — every
+# `client`-fixture test logs in as this ADMIN user of the default test
+# organization, so existing (pre-Phase-5) endpoint tests keep working exactly
+# as before without individually wiring up auth. Cross-organization tests
+# create a SECOND, separate organization/user explicitly (see
+# test_organization_isolation.py).
+TEST_USER_EMAIL = "test-admin@recon.test"
+TEST_USER_PASSWORD = "TestPassword123!"
 
 # Test DB Engine
 SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
@@ -51,12 +64,23 @@ def setup_database(monkeypatch):
     # together. Individual tests exercise the limiter directly (test_security.py)
     # against a real, non-zero limit.
     monkeypatch.setattr(settings, "RECON_RATE_LIMIT_PER_MINUTE", 0)
+    # Same reasoning for the Phase 7 password-reset limiter — a fixed
+    # TestClient host would otherwise bucket the whole suite together.
+    # Individual tests exercise this limiter directly (test_security.py).
+    monkeypatch.setattr(settings, "PASSWORD_RESET_RATE_LIMIT_PER_HOUR", 0)
 
     Base.metadata.create_all(bind=engine)
-    # Seed default merchant
+    # Seed default org + merchant + admin user for every test in the suite.
     db = TestingSessionLocal()
-    merchant = Merchant(name="Test Merchant")
+    organization = Organization(name="Test Organization")
+    db.add(organization)
+    db.flush()
+    merchant = Merchant(name="Test Merchant", organization_id=organization.id)
     db.add(merchant)
+    user = User(email=TEST_USER_EMAIL, password_hash=hash_password(TEST_USER_PASSWORD))
+    db.add(user)
+    db.flush()
+    db.add(UserOrganization(user_id=user.id, organization_id=organization.id, role=ROLE_ADMIN))
     db.commit()
     db.close()
 
@@ -78,6 +102,32 @@ def db_session():
 @pytest.fixture
 def client(db_session, monkeypatch):
     """FastAPI TestClient with overridden get_db dependency."""
+    monkeypatch.setattr(database, "engine", engine)
+    monkeypatch.setattr(database, "SessionLocal", TestingSessionLocal)
+
+    def override_get_db():
+        try:
+            yield db_session
+        finally:
+            pass
+
+    app.dependency_overrides[get_db] = override_get_db
+    with TestClient(app) as test_client:
+        # Auto-authenticate as the default test ADMIN so every pre-existing
+        # (pre-Phase-5) endpoint test keeps working unmodified — real
+        # login, real session cookie, not an auth bypass.
+        login = test_client.post("/api/v1/auth/login", json={
+            "email": TEST_USER_EMAIL, "password": TEST_USER_PASSWORD,
+        })
+        assert login.status_code == 200, login.text
+        yield test_client
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def unauthenticated_client(db_session, monkeypatch):
+    """Same TestClient wiring as `client`, but WITHOUT logging in — for
+    testing the auth gate itself."""
     monkeypatch.setattr(database, "engine", engine)
     monkeypatch.setattr(database, "SessionLocal", TestingSessionLocal)
 

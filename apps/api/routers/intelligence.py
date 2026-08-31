@@ -16,8 +16,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import desc
 from sqlalchemy.orm import Session, joinedload
 
+from auth import AuthContext, ROLE_ADMIN, ROLE_OPERATOR, get_auth_context, require_role
 from config import settings
-from database import get_db, seed_default_merchant
+from database import get_db, get_org_merchant
 from models.case_intelligence import CaseIntelligence
 from models.recovery_case import RecoveryCase
 from schemas.intelligence import (
@@ -101,9 +102,9 @@ def _envelope(case: RecoveryCase, ci: CaseIntelligence | None) -> IntelligenceEn
     "/recovery-cases/{case_id}/intelligence",
     response_model=IntelligenceEnvelope,
 )
-def get_case_intelligence(case_id: str, db: Session = Depends(get_db)):
+def get_case_intelligence(case_id: str, ctx: AuthContext = Depends(get_auth_context), db: Session = Depends(get_db)):
     """Return the latest intelligence result for a recovery case."""
-    merchant = seed_default_merchant(db)
+    merchant = get_org_merchant(db, ctx.organization)
     case = _resolve_case(db, merchant.id, case_id)
     return _envelope(case, _latest_intel(db, case.id))
 
@@ -113,14 +114,18 @@ def get_case_intelligence(case_id: str, db: Session = Depends(get_db)):
     response_model=IntelligenceEnvelope,
     status_code=status.HTTP_200_OK,
 )
-def analyze_case_intelligence(case_id: str, db: Session = Depends(get_db)):
+def analyze_case_intelligence(
+    case_id: str,
+    ctx: AuthContext = Depends(require_role(ROLE_OPERATOR, ROLE_ADMIN)),
+    db: Session = Depends(get_db),
+):
     """
     Manually run the deterministic intelligence pipeline for a recovery case.
 
     Safe to repeat: each call persists a new version; it never creates or
     duplicates a recovery case. Works even when INTELLIGENCE_ENABLED is False.
     """
-    merchant = seed_default_merchant(db)
+    merchant = get_org_merchant(db, ctx.organization)
     case = _resolve_case(db, merchant.id, case_id)
     ci = run_intelligence(db, case.id, trigger="manual")
     # run_intelligence owns its transaction; re-resolve the row for a clean read
@@ -134,10 +139,11 @@ def list_intelligence(
     limit: int = Query(20, ge=1, le=100),
     verdict: str | None = Query(None, description="Filter by policy verdict"),
     band: str | None = Query(None, description="Filter by prediction band"),
+    ctx: AuthContext = Depends(get_auth_context),
     db: Session = Depends(get_db),
 ):
     """List recovery cases that have been analysed (latest analysis per case)."""
-    merchant = seed_default_merchant(db)
+    merchant = get_org_merchant(db, ctx.organization)
 
     rows = (
         db.query(CaseIntelligence)

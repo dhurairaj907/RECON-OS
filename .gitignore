@@ -47,3 +47,7 @@ pgdata/
 # Logs
 *.log
 logs/
+
+# Phase 6 — ML model artifacts (regenerate via `python -m ai.training.train`)
+apps/api/ai/artifacts/
+apps/api/evaluation/last_run.json

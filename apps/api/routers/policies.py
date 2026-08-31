@@ -12,8 +12,9 @@ rule logic, so exposing an editor here would risk a config that LOOKS
 enforced but silently isn't. See schemas/policy.py.
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from auth import AuthContext, get_auth_context
 from config import settings
 from schemas.policy import PolicyConfig, PolicyOverview, PolicyRuleInfo
 
@@ -21,7 +22,7 @@ router = APIRouter(tags=["Policies"])
 
 
 @router.get("/policies", response_model=PolicyOverview)
-def get_policy_overview():
+def get_policy_overview(ctx: AuthContext = Depends(get_auth_context)):
     max_attempts = int(settings.POLICY_MAX_RECOVERY_ATTEMPTS)
     contact_window = int(settings.POLICY_CONTACT_WINDOW_HOURS)
     max_contacts = int(settings.POLICY_MAX_CONTACTS_PER_WINDOW)

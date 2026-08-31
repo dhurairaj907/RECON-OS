@@ -64,6 +64,19 @@ _RATE_WINDOW_SECONDS = 60.0
 _request_log: dict[str, deque] = defaultdict(deque)
 
 
+def _check_rate(log: dict[str, deque], client_key: str, limit: int, window_seconds: float) -> None:
+    now = time.monotonic()
+    q = log[client_key]
+    while q and now - q[0] > window_seconds:
+        q.popleft()
+    if len(q) >= limit:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Rate limit exceeded ({limit} requests) for this operation.",
+        )
+    q.append(now)
+
+
 def rate_limit(request: Request) -> None:
     """Bounds financial-action attempts per client IP. In-memory, per-process
     — see module docstring for the multi-instance limitation. Disabled by
@@ -72,13 +85,22 @@ def rate_limit(request: Request) -> None:
     if limit <= 0:
         return
     client_key = request.client.host if request.client else "unknown"
-    now = time.monotonic()
-    q = _request_log[client_key]
-    while q and now - q[0] > _RATE_WINDOW_SECONDS:
-        q.popleft()
-    if len(q) >= limit:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=f"Rate limit exceeded ({limit} requests/minute) for this operation.",
-        )
-    q.append(now)
+    _check_rate(_request_log, client_key, limit, _RATE_WINDOW_SECONDS)
+
+
+# --- Phase 7: password-reset request rate limiting -------------------------
+# A SEPARATE bucket/window from the financial-action limiter above (different
+# semantics — this bounds account-enumeration/reset-spam attempts, not
+# recovery-action throughput) so tuning one never silently affects the other.
+_RESET_WINDOW_SECONDS = 3600.0
+_reset_request_log: dict[str, deque] = defaultdict(deque)
+
+
+def password_reset_rate_limit(request: Request) -> None:
+    """Bounds forgot-password attempts per client IP. Disabled by setting
+    PASSWORD_RESET_RATE_LIMIT_PER_HOUR to 0."""
+    limit = int(settings.PASSWORD_RESET_RATE_LIMIT_PER_HOUR)
+    if limit <= 0:
+        return
+    client_key = request.client.host if request.client else "unknown"
+    _check_rate(_reset_request_log, client_key, limit, _RESET_WINDOW_SECONDS)

@@ -64,6 +64,11 @@ class CaseIntelligence(Base):
 
     error_message = Column(Text, nullable=True)
 
+    # Phase 6 — structured ML model predictions (advisory context only; never
+    # overwrites diagnosis/prediction/strategy/policy, which stay authoritative
+    # and deterministic). None when models aren't trained/available yet.
+    ml_predictions_json = Column(JSON_TYPE, nullable=True)
+
     # Indexed / denormalised scalars for fast filtering & aggregation
     failure_category = Column(String(30), nullable=True, index=True)
     recovery_probability = Column(Numeric(5, 4), nullable=True, index=True)

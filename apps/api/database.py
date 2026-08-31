@@ -71,12 +71,23 @@ def _run_lightweight_migrations():
         "case_intelligence": {
             "provider_version": "VARCHAR(60)",
             "intelligence_version": "VARCHAR(20)",
+            "ml_predictions_json": "TEXT",
         },
         "recovery_actions": {
             "simulated": "BOOLEAN NOT NULL DEFAULT 0",
             "human_decision": "VARCHAR(20)",
             "human_decided_at": "TIMESTAMP",
             "human_decided_by": "VARCHAR(60)",
+        },
+        "merchants": {
+            "organization_id": "VARCHAR(36)",
+        },
+        "customers": {
+            "opted_out_channels": "VARCHAR(120)",
+        },
+        "communications": {
+            "idempotency_key": "VARCHAR(200)",
+            "last_webhook_event_id": "VARCHAR(120)",
         },
     }
 
@@ -110,4 +121,55 @@ def seed_default_merchant(db: Session):
     db.commit()
     db.refresh(merchant)
     logger.info(f"Created default merchant: {merchant.name} ({merchant.id})")
+    return merchant
+
+
+def ensure_default_organization(db: Session):
+    """
+    Phase 5 backfill: any Merchant created before Phase 5 (organization_id IS
+    NULL — including the existing recon_dev.db data) is assigned to a single
+    default Organization. Additive only — never destroys or resets data.
+    """
+    from models.merchant import Merchant
+    from models.organization import Organization
+
+    orphans = db.query(Merchant).filter(Merchant.organization_id.is_(None)).all()
+    if not orphans:
+        return None
+
+    default_org = (
+        db.query(Organization).filter(Organization.name == settings.DEFAULT_ORGANIZATION_NAME).first()
+    )
+    if default_org is None:
+        default_org = Organization(name=settings.DEFAULT_ORGANIZATION_NAME)
+        db.add(default_org)
+        db.commit()
+        db.refresh(default_org)
+        logger.info(f"Created default organization: {default_org.name} ({default_org.id})")
+
+    for m in orphans:
+        m.organization_id = default_org.id
+    db.commit()
+    logger.info(f"Backfilled {len(orphans)} pre-Phase-5 merchant(s) onto {default_org.name}")
+    return default_org
+
+
+def get_org_merchant(db: Session, organization):
+    """
+    Phase 5 — the organization-scoped replacement for `seed_default_merchant`.
+    Finds (or creates) the single Merchant row belonging to `organization`.
+    Routers now resolve `organization` from the authenticated session (see
+    auth.get_current_organization) instead of trusting any client-supplied id.
+    """
+    from models.merchant import Merchant
+
+    existing = db.query(Merchant).filter(Merchant.organization_id == organization.id).first()
+    if existing:
+        return existing
+
+    merchant = Merchant(name=f"{organization.name} Merchant", organization_id=organization.id)
+    db.add(merchant)
+    db.commit()
+    db.refresh(merchant)
+    logger.info(f"Created merchant for organization {organization.name}: {merchant.id}")
     return merchant

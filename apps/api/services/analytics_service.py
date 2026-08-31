@@ -19,9 +19,10 @@ from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
 from models.case_intelligence import CaseIntelligence
+from models.communication import Communication
 from models.recovery_action import RecoveryAction
 from models.recovery_case import RecoveryCase
-from schemas.analytics import AnalyticsMetrics, StrategyPerformance
+from schemas.analytics import AnalyticsMetrics, ChannelPerformance, CommunicationAnalytics, StrategyPerformance
 
 _ACTIVE_CASE_STATUSES = ("DETECTED", "OPEN")
 
@@ -131,6 +132,53 @@ def compute_analytics(db: Session, merchant_id: UUID) -> AnalyticsMetrics:
         for name, v in sorted(by_strategy.items())
     ]
 
+    # --- Phase 7: communications ---
+    comms = db.query(Communication).filter(Communication.merchant_id == merchant_id).all()
+    by_channel: dict = defaultdict(lambda: {"attempted": 0, "sent": 0, "delivered": 0, "failed": 0})
+    messages_sent = messages_delivered = messages_failed = 0
+    for c in comms:
+        by_channel[c.channel]["attempted"] += 1
+        if c.status == "SENT":
+            messages_sent += 1
+            by_channel[c.channel]["sent"] += 1
+        elif c.status == "DELIVERED":
+            messages_sent += 1
+            messages_delivered += 1
+            by_channel[c.channel]["sent"] += 1
+            by_channel[c.channel]["delivered"] += 1
+        elif c.status == "FAILED":
+            messages_failed += 1
+            by_channel[c.channel]["failed"] += 1
+    channel_performance = [
+        ChannelPerformance(channel=name, **v) for name, v in sorted(by_channel.items())
+    ]
+
+    communicated_case_ids = {
+        c.recovery_case_id for c in comms if c.status in ("SENT", "DELIVERED")
+    }
+    cases_with_communication = len(communicated_case_ids)
+    recovered_case_ids = {a.recovery_case_id for a in real_recovered}
+    cases_with_communication_recovered = len(communicated_case_ids & recovered_case_ids)
+    communication_to_recovery_rate = (
+        round(cases_with_communication_recovered / cases_with_communication, 4)
+        if cases_with_communication else None
+    )
+    recovery_value_from_communicated_cases = sum(
+        (Decimal(a.recovered_amount or 0) for a in real_recovered if a.recovery_case_id in communicated_case_ids),
+        Decimal("0.00"),
+    )
+    communications_analytics = CommunicationAnalytics(
+        messages_attempted=len(comms),
+        messages_sent=messages_sent,
+        messages_delivered=messages_delivered,
+        messages_failed=messages_failed,
+        channel_performance=channel_performance,
+        cases_with_communication=cases_with_communication,
+        cases_with_communication_recovered=cases_with_communication_recovered,
+        communication_to_recovery_rate=communication_to_recovery_rate,
+        recovery_value_from_communicated_cases=recovery_value_from_communicated_cases,
+    )
+
     return AnalyticsMetrics(
         generated_at=datetime.now(timezone.utc),
         revenue_at_risk=revenue_at_risk,
@@ -154,4 +202,5 @@ def compute_analytics(db: Session, merchant_id: UUID) -> AnalyticsMetrics:
         strategy_performance=strategy_performance,
         cases_analyzed=len(latest_intel),
         actions_total=len(actions),
+        communications=communications_analytics,
     )

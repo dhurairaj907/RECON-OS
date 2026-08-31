@@ -25,8 +25,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import desc
 from sqlalchemy.orm import Session, joinedload
 
+from auth import AuthContext, ROLE_ADMIN, ROLE_APPROVER, ROLE_OPERATOR, get_auth_context, require_role
 from config import settings
-from database import get_db, seed_default_merchant
+from database import get_db, get_org_merchant
 from models.recovery_action import RecoveryAction
 from models.recovery_case import RecoveryCase
 from schemas.action import (
@@ -126,8 +127,8 @@ def _to_response(db: Session, action: RecoveryAction) -> ActionResponse:
 
 # ---------------------------------------------------------------------------
 @router.get("/recovery-cases/{case_id}/actions", response_model=ActionListResponse)
-def list_case_actions(case_id: str, db: Session = Depends(get_db)):
-    merchant = seed_default_merchant(db)
+def list_case_actions(case_id: str, ctx: AuthContext = Depends(get_auth_context), db: Session = Depends(get_db)):
+    merchant = get_org_merchant(db, ctx.organization)
     case = _resolve_case(db, merchant.id, case_id)
     rows = (
         db.query(RecoveryAction)
@@ -139,13 +140,17 @@ def list_case_actions(case_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/recovery-cases/{case_id}/actions/propose", dependencies=_PROTECTED)
-def propose_case_action(case_id: str, db: Session = Depends(get_db)):
+def propose_case_action(
+    case_id: str,
+    ctx: AuthContext = Depends(require_role(ROLE_OPERATOR, ROLE_ADMIN)),
+    db: Session = Depends(get_db),
+):
     """
     Build (and, if executable, persist) an action proposal from the latest
     deterministic strategy/policy result. Idempotent: at most one
     CREATE_PAYMENT_LINK action per recovery case.
     """
-    merchant = seed_default_merchant(db)
+    merchant = get_org_merchant(db, ctx.organization)
     case = _resolve_case(db, merchant.id, case_id)
     action, proposal = get_or_create_action(db, case)
     return {
@@ -155,13 +160,17 @@ def propose_case_action(case_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/actions/{action_id}/execute", response_model=ExecuteActionResponse, dependencies=_PROTECTED)
-def execute_recovery_action(action_id: str, db: Session = Depends(get_db)):
+def execute_recovery_action(
+    action_id: str,
+    ctx: AuthContext = Depends(require_role(ROLE_OPERATOR, ROLE_ADMIN)),
+    db: Session = Depends(get_db),
+):
     """
     Execute a proposed action. The Policy Engine is RE-EVALUATED server-side
     here — a stored / frontend / AI 'approved' value is never trusted.
     Safe to repeat: a created Payment Link is never created twice.
     """
-    merchant = seed_default_merchant(db)
+    merchant = get_org_merchant(db, ctx.organization)
     try:
         uid = UUID(action_id)
     except ValueError:
@@ -189,7 +198,11 @@ def execute_recovery_action(action_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/actions/{action_id}/approve", response_model=ExecuteActionResponse, dependencies=_PROTECTED)
-def approve_recovery_action(action_id: str, db: Session = Depends(get_db)):
+def approve_recovery_action(
+    action_id: str,
+    ctx: AuthContext = Depends(require_role(ROLE_APPROVER, ROLE_ADMIN)),
+    db: Session = Depends(get_db),
+):
     """
     Record a human APPROVE decision for a NEEDS_APPROVAL action, then execute
     through the real Action Engine. Approval never bypasses safety checks: the
@@ -198,10 +211,10 @@ def approve_recovery_action(action_id: str, db: Session = Depends(get_db)):
     honouring this decision, or now APPROVED outright — never if now
     REJECTED). Never trusts a stored/frontend "approved" value.
     """
-    merchant = seed_default_merchant(db)
+    merchant = get_org_merchant(db, ctx.organization)
     action = _load_action(db, merchant.id, action_id)
 
-    result = approve_action(db, action.id, decided_by="OPERATOR")
+    result = approve_action(db, action.id, decided_by=ctx.user.email)
     resp = _to_response(db, result)
 
     if result.status == "EXECUTED":
@@ -221,16 +234,20 @@ def approve_recovery_action(action_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/actions/{action_id}/reject", response_model=ExecuteActionResponse, dependencies=_PROTECTED)
-def reject_recovery_action(action_id: str, db: Session = Depends(get_db)):
+def reject_recovery_action(
+    action_id: str,
+    ctx: AuthContext = Depends(require_role(ROLE_APPROVER, ROLE_ADMIN)),
+    db: Session = Depends(get_db),
+):
     """
     Record a human REJECT decision. Terminal — this action will never be
     executed. The recovery case itself is untouched; a new action can still
     be proposed later if circumstances change.
     """
-    merchant = seed_default_merchant(db)
+    merchant = get_org_merchant(db, ctx.organization)
     action = _load_action(db, merchant.id, action_id)
 
-    result = reject_action(db, action.id, decided_by="OPERATOR")
+    result = reject_action(db, action.id, decided_by=ctx.user.email)
     resp = _to_response(db, result)
     return ExecuteActionResponse(
         ok=False,
@@ -240,13 +257,17 @@ def reject_recovery_action(action_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/actions/{action_id}/verify-unknown", response_model=ExecuteActionResponse, dependencies=_PROTECTED)
-def verify_unknown_recovery_action(action_id: str, db: Session = Depends(get_db)):
+def verify_unknown_recovery_action(
+    action_id: str,
+    ctx: AuthContext = Depends(require_role(ROLE_OPERATOR, ROLE_ADMIN)),
+    db: Session = Depends(get_db),
+):
     """
     Resolve an UNKNOWN outcome by asking Razorpay directly whether the
     Payment Link was actually created — NEVER a blind retry. Safe to repeat;
     idempotent (a no-op once the action is no longer UNKNOWN).
     """
-    merchant = seed_default_merchant(db)
+    merchant = get_org_merchant(db, ctx.organization)
     action = _load_action(db, merchant.id, action_id)
 
     result = verify_unknown_action(db, action.id)
@@ -269,14 +290,18 @@ def verify_unknown_recovery_action(action_id: str, db: Session = Depends(get_db)
 
 
 @router.post("/actions/{action_id}/reconcile", response_model=ReconcileActionResponse, dependencies=_PROTECTED)
-def reconcile_recovery_action(action_id: str, db: Session = Depends(get_db)):
+def reconcile_recovery_action(
+    action_id: str,
+    ctx: AuthContext = Depends(require_role(ROLE_OPERATOR, ROLE_ADMIN)),
+    db: Session = Depends(get_db),
+):
     """
     Ask Razorpay directly whether this action's payment link was actually paid
     (GET /v1/payment_links/{id}) and, ONLY if Razorpay reports status == "paid"
     with the full amount, mark the action RECOVERED. Never fakes a result.
     Safe to repeat; idempotent.
     """
-    merchant = seed_default_merchant(db)
+    merchant = get_org_merchant(db, ctx.organization)
     try:
         uid = UUID(action_id)
     except ValueError:
@@ -301,8 +326,8 @@ def reconcile_recovery_action(action_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/actions/{action_id}", response_model=ActionResponse)
-def get_action(action_id: str, db: Session = Depends(get_db)):
-    merchant = seed_default_merchant(db)
+def get_action(action_id: str, ctx: AuthContext = Depends(get_auth_context), db: Session = Depends(get_db)):
+    merchant = get_org_merchant(db, ctx.organization)
     try:
         uid = UUID(action_id)
     except ValueError:
@@ -321,9 +346,10 @@ def list_actions(
     limit: int = Query(50, ge=1, le=200),
     status_filter: str | None = Query(None, alias="status"),
     outcome: str | None = Query(None),
+    ctx: AuthContext = Depends(get_auth_context),
     db: Session = Depends(get_db),
 ):
-    merchant = seed_default_merchant(db)
+    merchant = get_org_merchant(db, ctx.organization)
     q = db.query(RecoveryAction).filter(RecoveryAction.merchant_id == merchant.id)
     if status_filter:
         q = q.filter(RecoveryAction.status == status_filter)

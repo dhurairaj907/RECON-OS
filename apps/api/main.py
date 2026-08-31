@@ -9,8 +9,9 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from auth import seed_dev_admin
 from config import settings
-from database import init_db, SessionLocal, seed_default_merchant
+from database import ensure_default_organization, init_db, SessionLocal, seed_default_merchant
 from logging_config import setup_logging
 from routers import (
     webhooks_router,
@@ -26,6 +27,11 @@ from routers import (
     actions_router,
     analytics_router,
     policies_router,
+    auth_router,
+    communications_router,
+    users_router,
+    ai_router,
+    communication_webhooks_router,
 )
 
 
@@ -45,6 +51,8 @@ async def lifespan(app: FastAPI):
         db = SessionLocal()
         try:
             seed_default_merchant(db)
+            ensure_default_organization(db)
+            seed_dev_admin(db)
         finally:
             db.close()
         logger.info("Database schema initialized and default merchant verified.")
@@ -122,6 +130,11 @@ app.include_router(intelligence_router, prefix=API_V1_PREFIX)
 app.include_router(actions_router, prefix=API_V1_PREFIX)
 app.include_router(analytics_router, prefix=API_V1_PREFIX)
 app.include_router(policies_router, prefix=API_V1_PREFIX)
+app.include_router(auth_router, prefix=API_V1_PREFIX)
+app.include_router(communications_router, prefix=API_V1_PREFIX)
+app.include_router(users_router, prefix=API_V1_PREFIX)
+app.include_router(ai_router, prefix=API_V1_PREFIX)
+app.include_router(communication_webhooks_router, prefix=API_V1_PREFIX)
 
 
 if __name__ == "__main__":
