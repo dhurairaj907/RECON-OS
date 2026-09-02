@@ -44,10 +44,17 @@ services:
     build:
       context: ./apps/web
       dockerfile: Dockerfile
+      # NEXT_PUBLIC_API_URL must be a BUILD arg, not just a runtime env var —
+      # Next.js inlines NEXT_PUBLIC_* into the client bundle at `npm run
+      # build` time. Override via `NEXT_PUBLIC_API_URL=https://api.example.com
+      # docker compose build web` (or export it before `docker compose up
+      # --build`) for a real deployment; defaults to localhost for local dev.
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
     container_name: recon_web
     restart: unless-stopped
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8000
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
     ports:
       - "3000:3000"
     depends_on:

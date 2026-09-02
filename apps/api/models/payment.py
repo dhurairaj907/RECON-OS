@@ -30,9 +30,26 @@ class Payment(Base):
     amount_paise = Column(BigInteger, nullable=False)
     currency = Column(String(10), default="INR", nullable=False)
 
-    # Status
+    # Status — raw Razorpay string, unchanged since Phase 1 (still read by
+    # every existing consumer; never renamed).
     status = Column(String(50), nullable=False, index=True)
     method = Column(String(50), nullable=True)
+
+    # --- Phase 9: provider-neutral payment lifecycle (additive) -----------
+    # PENDING|AUTHORIZED|CAPTURED|SETTLED|FAILED|REFUNDED|PARTIALLY_REFUNDED|
+    # DISPUTED|EXPIRED|MISMATCHED — see schemas/reconciliation.py and
+    # services/reconciliation.py, the only writer of this column.
+    lifecycle_status = Column(String(20), nullable=True, index=True)
+    # IN_SYNC|MISMATCH|UNVERIFIED — whether RECON's lifecycle_status agrees
+    # with the last authoritative provider evidence seen for this payment.
+    reconciliation_status = Column(String(20), nullable=True, default="UNVERIFIED")
+    # Cumulative amount refunded across all refund.processed events seen so
+    # far for this payment. Never exceeds amount_paise (enforced in
+    # services/reconciliation.py, not here).
+    refunded_amount_paise = Column(BigInteger, nullable=False, default=0)
+    # OPEN|WON|LOST — set from payment.dispute.* events. A dispute never
+    # erases recovery history; see services/reconciliation.py.
+    dispute_status = Column(String(20), nullable=True)
 
     # Failure details
     error_code = Column(String(255), nullable=True)

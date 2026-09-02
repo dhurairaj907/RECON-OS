@@ -4,9 +4,18 @@ RECON OS — Phase 6: Real Data Extraction
 Pulls genuinely-labeled rows from the EXISTING `recon_dev.db` — never a
 second database, never synthetic values mixed in. A case only becomes a
 labeled training row once it has both a diagnosed `failure_category`
-(CaseIntelligence) and a SETTLED action outcome (RECOVERED/FAILED/PARTIAL/
-EXPIRED/CANCELLED — never PENDING or UNKNOWN, which aren't resolved yet and
-would be a leakage/mislabeling risk).
+(CaseIntelligence) and a SETTLED, NON-SIMULATED action outcome (RECOVERED/
+FAILED/PARTIAL/EXPIRED/CANCELLED — never PENDING or UNKNOWN, which aren't
+resolved yet and would be a leakage/mislabeling risk).
+
+`RecoveryAction.simulated=True` rows (produced by the Simulator/evaluation
+test lane — see services/simulator_service.py, evaluation/harness.py) are
+EXCLUDED here, using the exact same flag `services/analytics_service.py`
+already uses to keep simulated revenue out of `revenue_recovered`. Without
+this filter, running the Simulator or the evaluation/demo scenarios against
+this same dev database would silently leak test-lane outcomes into what
+`ai/training/train.py` reports as "real" evidence — a genuine bug found and
+fixed in the finalization audit, not a hypothetical concern.
 
 As of Phase 6, `recon_dev.db` has ~38 recovery cases total — this function
 will typically return a small double-digit-or-fewer row count, honestly
@@ -46,6 +55,8 @@ def extract_real_case_dataset(db: Session, merchant_id: Optional[object] = None)
         )
         if action is None or (action.outcome or "").upper() not in _SETTLED_OUTCOMES:
             continue   # no settled outcome yet — not a usable label
+        if action.simulated:
+            continue   # Simulator/evaluation test-lane data — never counted as real evidence
 
         latest_intel = (
             db.query(CaseIntelligence)

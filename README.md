@@ -2,7 +2,7 @@
 
 [![Phase](https://img.shields.io/badge/Phase-4%20%28PROVE%29-blue.svg)](https://github.com/recon-os)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://python.org)
+[![Python](https://img.shields.io/badge/Python-3.13-blue.svg)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115%2B-teal.svg)](https://fastapi.tiangolo.com)
 [![Next.js](https://img.shields.io/badge/Next.js-14.2%20App%20Router-black.svg)](https://nextjs.org)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-blue.svg)](https://www.postgresql.org)
@@ -99,6 +99,8 @@ Phase 1 establishes the rock-solid **Data Plane** foundation:
 ```bash
 cp .env.example .env
 ```
+For anything beyond local Docker Compose — a real staging/demo deployment,
+and especially the Razorpay TEST→LIVE cutover — see **[DEPLOYMENT.md](DEPLOYMENT.md)**.
 
 ### 2. Launch All Services
 ```bash
@@ -109,6 +111,20 @@ This launches:
 - **PostgreSQL Database** on `localhost:5432`
 - **FastAPI Backend** on `http://localhost:8000` (API docs at `http://localhost:8000/docs`)
 - **Next.js Command Center** on `http://localhost:3000`
+
+**Deploying beyond localhost:** `NEXT_PUBLIC_API_URL` is a Next.js *build-time*
+variable — it gets inlined into the frontend's client JS bundle when the
+image is built, not read at container start. The default above is correct
+for local Docker Compose only. For a real deployment, set it before
+building:
+```bash
+NEXT_PUBLIC_API_URL=https://your-deployed-api.example.com docker-compose build web
+docker-compose up
+```
+The backend image installs from `apps/api/requirements-lock.txt` (exact,
+verified versions) rather than `requirements.txt` (loose ranges) — see that
+file's header comment for how to regenerate it after an intentional
+dependency change.
 
 ---
 

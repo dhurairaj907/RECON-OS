@@ -13,7 +13,7 @@ import logging
 from fastapi import APIRouter, Request, HTTPException, Header, Depends, status
 from sqlalchemy.orm import Session
 
-from database import get_db, seed_default_merchant
+from database import get_db, resolve_connected_merchant
 from integrations.razorpay.webhook_verifier import verify_webhook_signature
 from services.event_processor import process_inbound_event
 
@@ -58,8 +58,13 @@ async def handle_razorpay_webhook(
             detail="Malformed JSON payload"
         )
 
-    # 4. Get active merchant
-    merchant = seed_default_merchant(db)
+    # 4. Resolve the connected merchant. RECON OS has a single, platform-wide
+    # Razorpay credential (see config.py) — every real webhook is attributed
+    # to the one canonical default Organization's Merchant, resolved the
+    # same deterministic way every other org-scoped router resolves theirs.
+    # True multi-tenant routing needs per-organization credentials, which
+    # does not exist today (see database.resolve_connected_merchant).
+    merchant = resolve_connected_merchant(db)
 
     # 5. Process through the data pipeline
     try:
@@ -68,6 +73,7 @@ async def handle_razorpay_webhook(
             raw_payload=payload,
             merchant_id=merchant.id,
             source="razorpay",
+            signature_verified=True,
         )
         return {
             "status": "success",

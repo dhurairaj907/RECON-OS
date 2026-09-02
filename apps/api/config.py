@@ -22,6 +22,13 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql://recon:recon_secret@localhost:5432/reconos"
 
     # --- Razorpay ---
+    # This is a SINGLE, PLATFORM-WIDE credential set — not per-organization.
+    # Every organization in this deployment shares the one connected Razorpay
+    # account (see database.resolve_connected_merchant). RECON OS has no
+    # per-organization encrypted credential store today; a production
+    # multi-merchant deployment, where each organization connects its own
+    # Razorpay account, needs one before that's safe to build — it was
+    # deliberately not improvised in Phase 8 (see the phase report).
     RAZORPAY_KEY_ID: str = ""
     RAZORPAY_KEY_SECRET: str = ""
     RAZORPAY_WEBHOOK_SECRET: str = ""
@@ -45,6 +52,9 @@ class Settings(BaseSettings):
 
     # --- Application ---
     LOG_LEVEL: str = "INFO"
+    # Allowed browser origins for the credentialed session cookie (see
+    # main.py's CORSMiddleware). Set to the real deployed frontend origin(s)
+    # before a public deployment — see .env.example for the full rationale.
     CORS_ORIGINS: List[str] = ["http://localhost:3000"]
     DEFAULT_MERCHANT_NAME: str = "RECON Demo Merchant"
 
@@ -61,6 +71,17 @@ class Settings(BaseSettings):
     SESSION_COOKIE_NAME: str = "recon_session"
     # Cookie Secure flag — only safe to enable once served over HTTPS.
     SESSION_COOKIE_SECURE: bool = False
+    # Cookie SameSite policy — "lax" (default) works for same-site local dev
+    # AND a same-site production deployment (frontend + backend sharing a
+    # domain, or proxied to appear same-site). A CROSS-SITE deployment
+    # (e.g. a Cloudflare Pages frontend calling a separate Render backend
+    # domain) needs "none" — browsers refuse to send a Lax/Strict cookie on
+    # a cross-site fetch()/XHR at all, which silently breaks every
+    # authenticated API call. "none" REQUIRES Secure (auth.py enforces this
+    # automatically regardless of SESSION_COOKIE_SECURE — see
+    # auth.py::_cookie_attrs) since browsers drop an insecure SameSite=None
+    # cookie outright. Valid values: lax | strict | none.
+    SESSION_COOKIE_SAMESITE: str = "lax"
     # Local-dev-only deterministic admin seed (never touches production unless
     # explicitly enabled). Creates one real, properly hashed-password user —
     # not a bypass of authentication.
@@ -102,9 +123,15 @@ class Settings(BaseSettings):
     WHATSAPP_TEMPLATE_IDS: str = ""
 
     # --- Phase 7: controlled automatic recovery communication ---
-    # Off by default — RECON never contacts a customer automatically unless
-    # explicitly enabled. Even when on, every send still goes through the same
+    # RECON never contacts a customer automatically unless explicitly
+    # enabled. Even when on, every send still goes through the same
     # decide_communication()/send_communication() gate a manual send uses.
+    # This is one of three flags — together with INTELLIGENCE_ENABLED and
+    # AUTOMATIC_ACTION_EXECUTION_ENABLED below — that turn on the fully-
+    # automatic DETECT -> RECOVER -> VERIFY chain for real webhook-driven
+    # events (Phase 8). All three are True in this deployment's working
+    # .env; NEEDS_APPROVAL/REJECTED/UNKNOWN cases remain human-gated
+    # regardless of these flags.
     AUTOMATIC_COMMUNICATIONS_ENABLED: bool = False
     # Lifetime cap on ALL messages ever sent for one case (distinct from the
     # per-day rate limit above) — bounds the whole sequence, not just its pace.
@@ -122,6 +149,17 @@ class Settings(BaseSettings):
     # unsigned acceptance for local dev.
     COMMUNICATION_WEBHOOK_SECRET: str = ""
     COMMUNICATION_ALLOW_UNSIGNED_WEBHOOKS: bool = False
+
+    # Brevo-specific delivery webhook (POST /webhooks/communications/brevo) —
+    # a SEPARATE, additive credential. Brevo's transactional webhooks don't
+    # sign the request body the way the generic HMAC path above expects
+    # (per developers.brevo.com/docs/secured-webhooks); they authenticate via
+    # a static Bearer token configured in Brevo's dashboard instead. Kept as
+    # its own setting rather than reusing COMMUNICATION_WEBHOOK_SECRET so the
+    # two independent credentials can never be confused or rotated together.
+    # There is no "allow unsigned" escape hatch for this one — always fail
+    # closed if unset.
+    BREVO_WEBHOOK_TOKEN: str = ""
 
     # --- Phase 7: password reset delivery ---
     # Used only to build the reset LINK embedded in the reset email — never
@@ -144,9 +182,26 @@ class Settings(BaseSettings):
     # --- Phase 2 (THINK): Intelligence pipeline ---
     # When True, a new recovery case is analysed automatically after the Phase 1
     # transaction commits (in a separate, isolated transaction). The manual
-    # analyze endpoint works regardless of this flag.
+    # analyze endpoint works regardless of this flag. This is one of three
+    # flags (see AUTOMATIC_COMMUNICATIONS_ENABLED above and
+    # AUTOMATIC_ACTION_EXECUTION_ENABLED below) that together turn on the
+    # fully-automatic DETECT -> RECOVER -> VERIFY chain for real
+    # webhook-driven events (Phase 8).
     INTELLIGENCE_ENABLED: bool = False
     INTELLIGENCE_VERSION: str = "2.5"
+
+    # --- Phase 3 (ACT): automatic execution of Policy-APPROVED actions ---
+    # Mirrors AUTOMATIC_COMMUNICATIONS_ENABLED's philosophy exactly, and is
+    # the third of the three Phase-8 automation flags described above. When
+    # True, run_intelligence() (services/intelligence/
+    # orchestrator.py) automatically calls the EXISTING get_or_create_action()
+    # + execute_action() right after a fresh analysis concludes with policy
+    # verdict APPROVED — no new execution mechanism, no Policy/Action Engine
+    # change: execute_action() still independently re-validates policy fresh
+    # before ever calling Razorpay, exactly as a manual "execute" click
+    # always has. NEEDS_APPROVAL and REJECTED cases are never auto-chained —
+    # a human decision remains mandatory for those, unchanged.
+    AUTOMATIC_ACTION_EXECUTION_ENABLED: bool = False
 
     # --- Policy Engine constants (deterministic, authoritative, operator-tunable) ---
     POLICY_MAX_RECOVERY_ATTEMPTS: int = 3

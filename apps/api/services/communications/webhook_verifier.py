@@ -47,3 +47,30 @@ def verify_communication_webhook_signature(raw_body: bytes, signature: str | Non
     except Exception as e:
         logger.error(f"Communication delivery webhook REJECTED: error verifying signature: {e}")
         return False
+
+
+def verify_brevo_webhook_token(authorization_header: str | None) -> bool:
+    """
+    Brevo-specific webhook authentication — ADDITIVE to (never a replacement
+    for) verify_communication_webhook_signature() above. Brevo's
+    transactional webhooks do not compute an HMAC signature of the request
+    body the way the generic RECON webhook does; per
+    developers.brevo.com/docs/secured-webhooks, Brevo instead sends a static
+    Bearer token (configured in Brevo's dashboard) with every call. Verified
+    here with a constant-time comparison against BREVO_WEBHOOK_TOKEN.
+
+    Always fail-closed: unlike the generic verifier, there is no
+    "allow unsigned" opt-out for this one, and an unconfigured token is
+    always a rejection — never logs the token itself.
+    """
+    token = settings.BREVO_WEBHOOK_TOKEN
+    if not token:
+        logger.error("Brevo delivery webhook REJECTED: BREVO_WEBHOOK_TOKEN is not configured.")
+        return False
+    if not authorization_header or not authorization_header.startswith("Bearer "):
+        logger.warning("Brevo delivery webhook REJECTED: missing or malformed Authorization header.")
+        return False
+    provided = authorization_header[len("Bearer "):].strip()
+    if not provided:
+        return False
+    return hmac.compare_digest(provided, token)

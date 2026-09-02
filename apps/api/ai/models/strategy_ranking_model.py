@@ -54,5 +54,6 @@ def rank_strategies(features: dict, candidate_strategies: Optional[list[str]] = 
         "model_name": MODEL_NAME,
         "model_version": metadata.version,
         "status": metadata.status,
+        "real_world_validation": metadata.real_world_validation,
         "ranking": ranking,
     }

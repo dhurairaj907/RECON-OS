@@ -25,6 +25,9 @@ class RecoveryCaseBase(BaseModel):
     priority: str = "MEDIUM"
     attempt_count: int = 0
     max_attempts: int = 3
+    # True only for a case created from the sanctioned RECON simulator — a
+    # real, signature-verified Razorpay webhook can never produce this.
+    simulated: bool = False
 
 
 class RecoveryCaseResponse(RecoveryCaseBase):

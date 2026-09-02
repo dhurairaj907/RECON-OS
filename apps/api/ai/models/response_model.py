@@ -47,5 +47,6 @@ def predict_one(features: dict, *, channel: str, message_type: str, prior_commun
         "model_name": MODEL_NAME,
         "model_version": metadata.version,
         "status": metadata.status,   # expected "DATA_LIMITED" — surface this to callers
+        "real_world_validation": metadata.real_world_validation,
         "response_probability": round(p, 4),
     }

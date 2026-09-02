@@ -26,6 +26,7 @@ from models.customer import Customer
 from models.recovery_case import RecoveryCase
 from schemas.intelligence import VERDICT_TO_STATUS
 from services.intelligence.ai_diagnosis import diagnose_case
+from services.intelligence.ai_intent import evaluate_intent_case
 from services.intelligence.context_builder import build_case_context
 from services.intelligence.policy_engine import evaluate_policy
 from services.intelligence.prediction import predict
@@ -151,7 +152,37 @@ def run_intelligence(db, case_id, *, trigger: str = "manual") -> CaseIntelligenc
              "alternatives": [a.model_dump(mode="json") for a in strategy.alternatives]},
         )
 
-        policy = evaluate_policy(ctx, diagnosis, prediction, strategy)
+        # --- Phase 10: intent evaluation (never bypasses Policy; a failure
+        # here falls back to intent=None, i.e. today's exact behavior — see
+        # policy_engine.py RULE_INTENT_UNWILLING / RULE_INTENT_EVIDENCE,
+        # both no-ops when intent is None) ---
+        intent = None
+        try:
+            intent, intent_meta = evaluate_intent_case(ctx, diagnosis, prediction)
+            _audit(
+                db, merchant_id, case.id, "INTENT_AGENT", "INTENT_EVALUATED",
+                f"Intent: {intent.classification.value} (confidence {intent.confidence:.0%}, "
+                f"evidence completeness {intent.evidence_completeness:.0%}, source={intent.provider}) "
+                f"— {intent.rationale}",
+                {"classification": intent.classification.value,
+                 "confidence": intent.confidence,
+                 "evidence_completeness": intent.evidence_completeness,
+                 "reason_codes": intent.reason_codes,
+                 "positive_signals": [s.model_dump(mode="json") for s in intent.positive_signals],
+                 "negative_signals": [s.model_dump(mode="json") for s in intent.negative_signals],
+                 "unavailable_signals": intent.unavailable_signals,
+                 "provider": intent.provider, "provider_version": intent.provider_version,
+                 "ai_attempted": intent_meta.attempted, "ai_used": intent_meta.used_ai,
+                 "ai_fallback_reason": intent_meta.fallback_reason},
+            )
+        except Exception:
+            logger.exception(
+                "Intent evaluation failed for case %s (non-fatal, falling back to "
+                "intent=None — Policy Engine behavior unchanged)", case.id,
+            )
+            intent = None
+
+        policy = evaluate_policy(ctx, diagnosis, prediction, strategy, intent=intent)
         _audit(
             db, merchant_id, case.id, "POLICY_ENGINE", "POLICY_EVALUATED",
             f"Policy verdict: {policy.verdict.value} (risk {policy.risk_level.value}, "
@@ -207,12 +238,15 @@ def run_intelligence(db, case_id, *, trigger: str = "manual") -> CaseIntelligenc
             diagnosis_json=diagnosis.model_dump(mode="json"),
             prediction_json=prediction.model_dump(mode="json"),
             strategy_json=strategy.model_dump(mode="json"),
+            intent_json=intent.model_dump(mode="json") if intent is not None else None,
             policy_json=policy.model_dump(mode="json"),
             ml_predictions_json=ml_predictions,
             failure_category=diagnosis.failure_category.value,
             recovery_probability=prediction.recovery_probability,
             prediction_band=prediction.band.value,
             recommended_action=strategy.action.value,
+            intent_classification=(intent.classification.value if intent is not None else None),
+            intent_confidence=(intent.confidence if intent is not None else None),
             policy_verdict=policy.verdict.value,
             requires_human=policy.requires_human,
             risk_level=policy.risk_level.value,
@@ -241,6 +275,56 @@ def run_intelligence(db, case_id, *, trigger: str = "manual") -> CaseIntelligenc
             "Intelligence complete for %s v%s -> %s / %s",
             case.case_number, version, lifecycle_status, policy.verdict.value,
         )
+
+        # --- Recovery Opportunity gate — reuses the EXISTING prediction.band
+        # (LOW/MEDIUM/HIGH from services/intelligence/prediction.py) rather
+        # than inventing a parallel classification system. This is a
+        # BUSINESS decision, layered ALONGSIDE Policy, never a replacement
+        # for it: Policy alone still decides whether an action is SAFE to
+        # execute; this decides whether it's WORTH automatically pursuing.
+        # A LOW-opportunity case can still be executed by an explicit human
+        # override (the manual "Execute Approved Recovery" action) — only
+        # the AUTOMATIC path is gated here, matching "maximize recoverable
+        # revenue, not maximize Payment Links".
+        low_opportunity = prediction.band.value == "LOW"
+        if low_opportunity and settings.AUTOMATIC_ACTION_EXECUTION_ENABLED and policy.verdict.value == "APPROVED":
+            _audit(
+                db, merchant_id, case.id, "RECOVERY_OPPORTUNITY", "AUTOMATED_PURSUIT_STOPPED",
+                f"Automatic recovery not pursued for {case.case_number}: recovery opportunity is LOW "
+                f"(recovery_probability={prediction.recovery_probability:.0%}) — policy APPROVED the "
+                f"action as safe, but low expected value does not justify automatic execution. A human "
+                f"may still execute it manually as an explicit override.",
+                {"prediction_band": prediction.band.value, "recovery_probability": prediction.recovery_probability},
+            )
+            db.commit()
+
+        # --- Phase 3: automatic execution of a Policy-APPROVED action -----
+        # Off by default (AUTOMATIC_ACTION_EXECUTION_ENABLED). Uses ONLY the
+        # existing, unmodified Action Engine functions a manual "execute"
+        # click already uses — execute_action() independently re-validates
+        # policy fresh against current state before ever calling Razorpay,
+        # exactly as it always has. NEEDS_APPROVAL/REJECTED verdicts are
+        # never auto-chained; a human decision remains mandatory for those.
+        # A failure here can never undo or invalidate the intelligence
+        # result already committed above.
+        if settings.AUTOMATIC_ACTION_EXECUTION_ENABLED and policy.verdict.value == "APPROVED" and not low_opportunity:
+            try:
+                from services.actions.proposal import get_or_create_action
+                from services.actions.executor import execute_action
+
+                action, proposal = get_or_create_action(db, case)
+                if action is not None and proposal.proposable:
+                    execute_action(db, action.id)
+                    logger.info(
+                        "Automatic action execution attempted for %s (policy APPROVED)",
+                        case.case_number,
+                    )
+            except Exception:
+                logger.exception(
+                    "Automatic action execution failed for %s (non-fatal, intelligence result unaffected)",
+                    case.case_number,
+                )
+
         return ci
 
     except Exception as e:  # pragma: no cover - defensive

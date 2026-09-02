@@ -337,7 +337,7 @@ def test_idempotency_key_is_deterministic_not_random(db_session, razorpay_env):
     execute_action(db_session, action.id)
     comm = send_communication(db_session, merchant_id=case.merchant_id, case=case,
                               channel="EMAIL", message_type="PAYMENT_LINK_CREATED")
-    expected = f"{case.id}:{action.id}:PAYMENT_LINK_CREATED"
+    expected = f"{case.id}:{action.id}:EMAIL:PAYMENT_LINK_CREATED"
     assert comm.idempotency_key == expected
 
 
@@ -354,18 +354,44 @@ def test_automation_disabled_by_default_no_auto_send(db_session, razorpay_env):
 
 
 def test_automation_sends_on_action_executed_when_enabled(db_session, razorpay_env, monkeypatch):
+    """Objective 30/31: an approved automated recovery fans out to EVERY
+    configured, eligible channel (EMAIL+SMS+WHATSAPP) as part of the SAME
+    automated event — not just one AI-picked channel."""
     monkeypatch.setattr(settings, "AUTOMATIC_COMMUNICATIONS_ENABLED", True)
     case = _analyzed_case(db_session, upi_timeout_payload())
     action = _proposed_action(db_session, case)
     execute_action(db_session, action.id)
 
     comms = db_session.query(Communication).filter_by(recovery_case_id=case.id).all()
-    assert len(comms) == 1
-    assert comms[0].message_type == "PAYMENT_RECOVERY"
-    assert comms[0].status == "SENT"
+    channels = {c.channel for c in comms}
+    assert channels == {"EMAIL", "SMS", "WHATSAPP"}
+    assert all(c.message_type == "PAYMENT_RECOVERY" for c in comms)
+    assert all(c.status == "SENT" for c in comms), [c.status for c in comms]
 
     audits = {a.action for a in db_session.query(AuditLog).filter_by(recovery_case_id=case.id).all()}
     assert "AI_RECOMMENDATION_CONSIDERED" in audits
+
+
+def test_automation_one_channel_failure_never_blocks_the_others(db_session, razorpay_env, monkeypatch):
+    """Objective 30/31/80: a failure/skip on one channel must never prevent
+    the others from being attempted or crash the overall recovery."""
+    monkeypatch.setattr(settings, "AUTOMATIC_COMMUNICATIONS_ENABLED", True)
+    real_send = __import__("services.communications.automation", fromlist=["send_communication"]).send_communication
+
+    def flaky_send(db, *, merchant_id, case, channel, message_type, decided_by="OPERATOR"):
+        if channel == "SMS":
+            raise RuntimeError("simulated SMS provider outage")
+        return real_send(db, merchant_id=merchant_id, case=case, channel=channel,
+                         message_type=message_type, decided_by=decided_by)
+
+    monkeypatch.setattr("services.communications.automation.send_communication", flaky_send)
+    case = _analyzed_case(db_session, upi_timeout_payload())
+    action = _proposed_action(db_session, case)
+    execute_action(db_session, action.id)   # must not raise despite SMS blowing up
+
+    comms = db_session.query(Communication).filter_by(recovery_case_id=case.id).all()
+    channels_sent = {c.channel for c in comms if c.status == "SENT"}
+    assert channels_sent == {"EMAIL", "WHATSAPP"}   # SMS never persisted since it raised before returning
 
 
 def test_automation_sends_thank_you_on_recovery_verified(db_session, razorpay_env, monkeypatch):
@@ -380,8 +406,13 @@ def test_automation_sends_thank_you_on_recovery_verified(db_session, razorpay_en
 
     recovered_msgs = db_session.query(Communication).filter_by(
         recovery_case_id=case.id, message_type="PAYMENT_RECOVERED").all()
-    assert len(recovered_msgs) == 1
-    assert recovered_msgs[0].status == "SENT"
+    # All three channels are attempted; some may legitimately be rate-limited
+    # (the same customer already received 3 messages moments earlier for
+    # PAYMENT_RECOVERY within COMMUNICATION_RATE_LIMIT_PER_CASE_PER_DAY) —
+    # partial throttling is correct, honest behavior, not a bug.
+    assert len(recovered_msgs) == 3
+    assert any(c.status == "SENT" for c in recovered_msgs)
+    assert all(c.status in ("SENT", "SKIPPED") for c in recovered_msgs)
 
 
 def test_automation_never_sends_for_simulated_recovery(db_session, razorpay_env, monkeypatch):
@@ -451,8 +482,12 @@ def test_evaluate_reminder_sequence_sends_once_window_elapsed(db_session, razorp
     action = _proposed_action(db_session, case)
     execute_action(db_session, action.id)
 
-    initial = db_session.query(Communication).filter_by(recovery_case_id=case.id).first()
-    initial.sent_at = datetime.now(timezone.utc) - timedelta(hours=2)
+    # Automatic execution now fans out to every channel — backdate ALL of
+    # them so evaluate_reminder_sequence's "most recent send" lookup sees a
+    # uniformly-elapsed window, not just one channel's timestamp.
+    initials = db_session.query(Communication).filter_by(recovery_case_id=case.id).all()
+    for c in initials:
+        c.sent_at = datetime.now(timezone.utc) - timedelta(hours=2)
     db_session.commit()
 
     decision = automation.evaluate_reminder_sequence(db_session, merchant_id=case.merchant_id, case=case)

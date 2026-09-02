@@ -28,6 +28,7 @@ Security:
 
 from __future__ import annotations
 
+import json
 import logging
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
@@ -36,7 +37,11 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models.audit_log import AuditLog
 from models.communication import Communication
-from services.communications.webhook_verifier import verify_communication_webhook_signature
+from services.communications.brevo_webhook import translate_brevo_event
+from services.communications.webhook_verifier import (
+    verify_brevo_webhook_token,
+    verify_communication_webhook_signature,
+)
 
 logger = logging.getLogger("recon.routers.communication_webhooks")
 router = APIRouter(prefix="/webhooks", tags=["Webhooks"])
@@ -45,12 +50,87 @@ _ELIGIBLE_SOURCE_STATUS = {"SENT"}
 _TARGET_STATUS = {"delivered": "DELIVERED", "failed": "FAILED"}
 
 
+def _apply_delivery_event(
+    db: Session, *, provider_message_id: str, event_id: str | None,
+    target_status: str | None, error_reason: str | None = None,
+    actor: str = "COMMUNICATION_PROVIDER_WEBHOOK",
+) -> dict:
+    """
+    The ONE shared state-transition function every delivery-webhook route
+    calls — the generic HMAC-signed route and the Brevo route both translate
+    their own payload shape into these plain arguments first, then land here.
+    Never duplicated, never reimplemented per-provider.
+
+    `target_status` is "DELIVERED" | "FAILED" | None. None means "acknowledge
+    this event but do not change Communication.status" — used for a
+    non-terminal provider event (e.g. Brevo softBounce/deferred/spam) that
+    RECON's state machine has no justified transition for; the row is still
+    updated with `last_webhook_event_id` so a later real terminal event isn't
+    treated as a fresh, un-deduplicated one.
+    """
+    comm = db.query(Communication).filter(Communication.provider_message_id == provider_message_id).first()
+    if comm is None:
+        logger.info("Communication delivery webhook: no row for provider_message_id=%s", provider_message_id)
+        return {"status": "ignored", "reason": "unknown_provider_message_id"}
+
+    if event_id and comm.last_webhook_event_id == event_id:
+        return {"status": "ignored", "reason": "duplicate_event", "communication_id": str(comm.id)}
+
+    if target_status is None:
+        if event_id:
+            comm.last_webhook_event_id = event_id
+        db.add(AuditLog(
+            merchant_id=comm.merchant_id, recovery_case_id=comm.recovery_case_id, actor=actor,
+            action="COMMUNICATION_DELIVERY_EVENT_OBSERVED",
+            detail=f"{comm.channel}/{comm.message_type} for communication {comm.id}: "
+                   f"non-terminal provider event observed (event {event_id}), status unchanged ({comm.status})",
+            metadata_json={"provider_message_id": provider_message_id, "event_id": event_id,
+                           "error_reason": error_reason},
+        ))
+        db.commit()
+        return {"status": "acknowledged", "reason": "non_terminal_event", "communication_id": str(comm.id)}
+
+    if comm.status not in _ELIGIBLE_SOURCE_STATUS:
+        # Already DELIVERED/FAILED/CANCELLED/etc — a delivery callback can
+        # never move a message backwards or re-fabricate a different terminal
+        # state.
+        if event_id:
+            comm.last_webhook_event_id = event_id
+        db.commit()
+        return {"status": "ignored", "reason": f"communication already {comm.status}",
+                "communication_id": str(comm.id)}
+
+    comm.status = target_status
+    if event_id:
+        comm.last_webhook_event_id = event_id
+    if target_status == "FAILED" and error_reason:
+        comm.error_message = str(error_reason)[:1000]
+        comm.error_code = comm.error_code or "DELIVERY_FAILED"
+
+    db.add(AuditLog(
+        merchant_id=comm.merchant_id, recovery_case_id=comm.recovery_case_id, actor=actor,
+        action="COMMUNICATION_DELIVERY_STATUS_UPDATED",
+        detail=f"{comm.channel}/{comm.message_type} for communication {comm.id} -> {target_status} "
+               f"(provider event {event_id})",
+        metadata_json={"provider_message_id": provider_message_id, "event_id": event_id,
+                       "status": target_status, "error_reason": error_reason},
+    ))
+    db.commit()
+    db.refresh(comm)
+    logger.info("Communication %s delivery status -> %s via webhook event %s", comm.id, target_status, event_id)
+    return {"status": "ok", "communication_id": str(comm.id), "new_status": target_status}
+
+
 @router.post("/communications/delivery", status_code=status.HTTP_200_OK)
 async def handle_communication_delivery_webhook(
     request: Request,
     x_recon_comm_signature: str | None = Header(default=None, alias="X-RECON-Comm-Signature"),
     db: Session = Depends(get_db),
 ):
+    """Generic, RECON-defined webhook shape — signed with the HMAC path
+    (COMMUNICATION_WEBHOOK_SECRET). Unrelated to the Brevo-specific route
+    below, which uses Brevo's own native payload shape and its own Bearer
+    token authentication."""
     raw_body = await request.body()
     if not raw_body:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Empty webhook body")
@@ -58,7 +138,6 @@ async def handle_communication_delivery_webhook(
     if not verify_communication_webhook_signature(raw_body, x_recon_comm_signature):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or missing webhook signature")
 
-    import json
     try:
         payload = json.loads(raw_body.decode("utf-8"))
     except ValueError:
@@ -77,41 +156,52 @@ async def handle_communication_delivery_webhook(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail=f"Unsupported status '{raw_status}' — expected 'delivered' or 'failed'")
 
-    comm = db.query(Communication).filter(Communication.provider_message_id == provider_message_id).first()
-    if comm is None:
-        # Never reveal whether a given id exists to an unauthenticated caller
-        # beyond what the 200 response already implies for a valid signature.
-        logger.info("Communication delivery webhook: no row for provider_message_id=%s", provider_message_id)
-        return {"status": "ignored", "reason": "unknown_provider_message_id"}
+    return _apply_delivery_event(
+        db, provider_message_id=provider_message_id, event_id=event_id,
+        target_status=target_status, error_reason=error_reason,
+    )
 
-    if comm.last_webhook_event_id == event_id:
-        return {"status": "ignored", "reason": "duplicate_event", "communication_id": str(comm.id)}
 
-    if comm.status not in _ELIGIBLE_SOURCE_STATUS:
-        # Already DELIVERED/FAILED/CANCELLED/etc — a delivery callback can
-        # never move a message backwards or re-fabricate a different terminal
-        # state.
-        comm.last_webhook_event_id = event_id
-        db.commit()
-        return {"status": "ignored", "reason": f"communication already {comm.status}",
-                "communication_id": str(comm.id)}
+@router.post("/communications/brevo", status_code=status.HTTP_200_OK)
+async def handle_brevo_delivery_webhook(
+    request: Request,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    db: Session = Depends(get_db),
+):
+    """
+    Brevo's native transactional-webhook shape (developers.brevo.com/docs/
+    transactional-webhooks) — a SEPARATE route from the generic one above
+    because Brevo's payload fields and its authentication mechanism (a
+    static Bearer token, see developers.brevo.com/docs/secured-webhooks) are
+    both different from the generic RECON shape. The same shared
+    `_apply_delivery_event` state machine is used for both — no logic is
+    duplicated, and Communication.status can still only ever be advanced by
+    that one function.
 
-    comm.status = target_status
-    comm.last_webhook_event_id = event_id
-    if target_status == "FAILED" and error_reason:
-        comm.error_message = str(error_reason)[:1000]
-        comm.error_code = comm.error_code or "DELIVERY_FAILED"
+    Fail-closed always: BREVO_WEBHOOK_TOKEN must be configured and the
+    Authorization header must match it — there is no unsigned-acceptance
+    opt-out for this route.
+    """
+    raw_body = await request.body()
+    if not raw_body:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Empty webhook body")
 
-    db.add(AuditLog(
-        merchant_id=comm.merchant_id, recovery_case_id=comm.recovery_case_id,
-        actor="COMMUNICATION_PROVIDER_WEBHOOK",
-        action="COMMUNICATION_DELIVERY_STATUS_UPDATED",
-        detail=f"{comm.channel}/{comm.message_type} for communication {comm.id} -> {target_status} "
-               f"(provider event {event_id})",
-        metadata_json={"provider_message_id": provider_message_id, "event_id": event_id,
-                       "status": target_status, "error_reason": error_reason},
-    ))
-    db.commit()
-    db.refresh(comm)
-    logger.info("Communication %s delivery status -> %s via webhook event %s", comm.id, target_status, event_id)
-    return {"status": "ok", "communication_id": str(comm.id), "new_status": target_status}
+    if not verify_brevo_webhook_token(authorization):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or missing webhook authentication")
+
+    try:
+        payload = json.loads(raw_body.decode("utf-8"))
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Malformed JSON payload")
+
+    translated = translate_brevo_event(payload)
+    if not translated["provider_message_id"]:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="message-id is required")
+
+    target_status = _TARGET_STATUS.get(translated["status"] or "")
+
+    return _apply_delivery_event(
+        db, provider_message_id=translated["provider_message_id"], event_id=translated["event_id"],
+        target_status=target_status, error_reason=translated["error_reason"],
+        actor="BREVO_WEBHOOK",
+    )

@@ -20,6 +20,8 @@ from routers.communications import router as communications_router
 from routers.users import router as users_router
 from routers.ai import router as ai_router
 from routers.communication_webhooks import router as communication_webhooks_router
+from routers.connections import router as connections_router
+from routers.reconciliation import router as reconciliation_router
 
 __all__ = [
     "webhooks_router",
@@ -40,4 +42,6 @@ __all__ = [
     "users_router",
     "ai_router",
     "communication_webhooks_router",
+    "connections_router",
+    "reconciliation_router",
 ]

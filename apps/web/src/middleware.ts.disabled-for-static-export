@@ -3,6 +3,24 @@ import { NextRequest, NextResponse } from "next/server";
 /**
  * RECON OS — Phase 5: route protection (UX layer only).
  *
+ * DISABLED (renamed out of Next.js's `middleware.ts` convention path) as
+ * part of the Cloudflare Pages deployment decision: `next build` with
+ * `output: 'export'` (next.config.js) hard-fails if a middleware.ts file
+ * is present — Edge Middleware requires a live request-time server, which
+ * static export/Cloudflare Pages static hosting doesn't provide. This file
+ * is preserved, not deleted, in case a future deployment instead uses a
+ * Cloudflare Next.js adapter (@cloudflare/next-on-pages / OpenNext) that
+ * DOES support middleware via Workers — rename back to `middleware.ts` and
+ * remove `output: 'export'` if that path is chosen later.
+ *
+ * The UX gap this leaves: `apps/web/src/lib/api.ts`'s fetcher already
+ * redirects to /session-expired on any 401 response (client-side, after
+ * the first failed API call) — so an unauthenticated visitor still gets
+ * redirected, just one render + one API round-trip later than this
+ * middleware would have managed, rather than before any page paints.
+ * Backend authorization itself is entirely unaffected either way — this
+ * was always UX-only, never a security boundary (see below).
+ *
  * This ONLY checks whether the session cookie is present — it cannot
  * validate it (no DB access at the edge). Every actual authorization
  * decision is made server-side per API call (see apps/api/auth.py); this

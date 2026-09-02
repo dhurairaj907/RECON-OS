@@ -36,6 +36,57 @@ export interface Payment {
   razorpay_created_at?: string | null;
   created_at: string;
   updated_at: string;
+  // Phase 9 — reconciliation (additive, all optional)
+  lifecycle_status?:
+    | "PENDING" | "AUTHORIZED" | "CAPTURED" | "SETTLED" | "FAILED"
+    | "REFUNDED" | "PARTIALLY_REFUNDED" | "DISPUTED" | "EXPIRED" | "MISMATCHED"
+    | null;
+  reconciliation_status?: "IN_SYNC" | "MISMATCH" | "UNVERIFIED" | null;
+  refunded_amount_paise?: number;
+  dispute_status?: "OPEN" | "WON" | "LOST" | null;
+}
+
+// Phase 9 — payment reconciliation
+export interface ReconciliationTimelineEntry {
+  source: "event" | "audit";
+  timestamp: string;
+  event_type?: string | null;
+  processing_status?: string | null;
+  action?: string | null;
+  detail?: string | null;
+  metadata?: Record<string, any> | null;
+}
+
+export interface PaymentReconciliation {
+  payment_id: string;
+  razorpay_payment_id: string;
+  provider: string;
+  raw_status: string;
+  lifecycle_status?: Payment["lifecycle_status"];
+  reconciliation_status: "IN_SYNC" | "MISMATCH" | "UNVERIFIED";
+  amount: string;
+  amount_paise: number;
+  refunded_amount_paise: number;
+  remaining_captured_amount_paise: number;
+  dispute_status?: Payment["dispute_status"];
+  timeline: ReconciliationTimelineEntry[];
+}
+
+export interface ReconciliationMismatch {
+  id: string;
+  action: string;
+  detail: string;
+  payment_id?: string | null;
+  recovery_case_id?: string | null;
+  metadata?: Record<string, any> | null;
+  created_at: string;
+}
+
+export interface ReconciliationMismatchListResponse {
+  items: ReconciliationMismatch[];
+  total: number;
+  page: number;
+  limit: number;
 }
 
 export interface Customer {
@@ -69,6 +120,9 @@ export interface RecoveryCase {
   priority: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
   attempt_count: number;
   max_attempts: number;
+  // True only for a case created from the sanctioned RECON simulator — a
+  // real, signature-verified Razorpay webhook can never produce this.
+  simulated?: boolean;
   opened_at: string;
   resolved_at?: string | null;
   created_at: string;
@@ -143,6 +197,33 @@ export interface PolicyResult {
   provider: string;
 }
 
+// Phase 10 — intent-aware recovery
+export interface IntentSignal {
+  code: string;
+  description: string;
+}
+
+export interface IntentResult {
+  classification: "RECOVERABLE" | "AMBIGUOUS" | "LIKELY_UNWILLING" | "INSUFFICIENT_EVIDENCE";
+  confidence: number;
+  reason_codes: string[];
+  positive_signals: IntentSignal[];
+  negative_signals: IntentSignal[];
+  unavailable_signals: string[];
+  evidence_completeness: number;
+  rationale: string;
+  provider: string;
+  provider_version?: string | null;
+  evaluated_at: string;
+}
+
+export interface IntentEnvelope {
+  case_id: string;
+  case_number: string;
+  evaluated: boolean;
+  intent?: IntentResult | null;
+}
+
 export interface IntelligenceEnvelope {
   case_id: string;
   case_number: string;
@@ -158,6 +239,7 @@ export interface IntelligenceEnvelope {
   diagnosis?: DiagnosisResult | null;
   prediction?: PredictionResult | null;
   strategy?: StrategyResult | null;
+  intent?: IntentResult | null;
   policy?: PolicyResult | null;
   context?: Record<string, any> | null;
   error_message?: string | null;
@@ -210,6 +292,7 @@ export interface ActionProposal {
   test_mode: boolean;
   razorpay_configured: boolean;
   simulator_enabled: boolean;
+  automatic_execution_enabled: boolean;
 }
 
 export type ActionUiState =
@@ -246,6 +329,7 @@ export interface RecoveryAction {
   recovered_amount: string;
   simulated?: boolean;
   simulator_enabled?: boolean;
+  automatic_execution_enabled?: boolean;
   strategy_action?: string | null;
   policy_verdict?: string | null;
   blocked_reason?: string | null;
@@ -535,4 +619,54 @@ export interface SendCommunicationResponse {
   ok: boolean;
   message: string;
   communication: Communication;
+}
+
+export interface RazorpayConnectionStatus {
+  status: string;
+  connection_scope: string;
+  configured: boolean;
+  test_mode: boolean;
+  test_key: boolean;
+  webhook_secret_set: boolean;
+  allow_unsigned_webhooks: boolean;
+  simulator_enabled: boolean;
+  last_event_at?: string | null;
+  last_success_at?: string | null;
+  last_failure_at?: string | null;
+  last_error?: string | null;
+  events_received_total: number;
+}
+
+export interface ChannelConnectionStatus {
+  status: string;
+  mode: string;
+  configured: boolean;
+  smtp_host_set?: boolean;
+  use_ssl?: boolean;
+  require_template?: boolean;
+}
+
+export interface ConnectionsOverview {
+  razorpay: RazorpayConnectionStatus;
+  email: ChannelConnectionStatus;
+  sms: ChannelConnectionStatus;
+  whatsapp: ChannelConnectionStatus;
+  automation: {
+    automatic_action_execution_enabled: boolean;
+    automatic_communications_enabled: boolean;
+  };
+}
+
+/* Phase 6 — AI model predictions (advisory only; the Policy Engine verdict
+ * shown elsewhere is computed independently of these and is authoritative).
+ * `predictions` is intentionally loosely typed — each of the up-to-9 model
+ * outputs has its own shape (model_name/model_version/status plus
+ * prediction-specific fields); see apps/api/ai/inference/service.py. */
+export interface AiPredictionsResponse {
+  case_id: string;
+  case_number: string;
+  analyzed: boolean;
+  generated_at?: string | null;
+  predictions?: Record<string, any> | null;
+  note?: string | null;
 }

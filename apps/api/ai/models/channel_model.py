@@ -46,7 +46,8 @@ def rank_channels(
     candidates = candidate_channels if candidate_channels is not None else ALL_CHANNELS
     if not candidates:
         return {"model_name": MODEL_NAME, "model_version": metadata.version,
-                "status": metadata.status, "ranking": []}
+                "status": metadata.status, "real_world_validation": metadata.real_world_validation,
+                "ranking": []}
 
     df = pd.DataFrame([
         {**features, "channel": c, "message_type": message_type,
@@ -66,5 +67,6 @@ def rank_channels(
         "model_name": MODEL_NAME,
         "model_version": metadata.version,
         "status": metadata.status,
+        "real_world_validation": metadata.real_world_validation,
         "ranking": ranking,
     }

@@ -28,6 +28,7 @@ from decimal import Decimal
 from sqlalchemy.orm import Session
 
 from models.audit_log import AuditLog
+from models.payment import Payment
 from models.recovery_action import RecoveryAction
 from models.recovery_case import RecoveryCase
 
@@ -211,6 +212,22 @@ def verify_payment_link_recovery(
     event_id = normalized.get("razorpay_event_id") or revenue_event_id
     simulated = bool(normalized.get("recon_simulated"))
     plink_status = (normalized.get("payment_link_status") or "").lower()
+
+    # Phase 9 — correlate the Payment row event_processor.py step 5 already
+    # created/updated from this same event's nested payment entity (the
+    # payment that actually fulfilled this payment link). Pure correlation
+    # pointer for analytics to later net out a refund/dispute on THIS
+    # specific payment from recovered revenue — never read by the Action
+    # Engine or Policy Engine, never gates anything here.
+    if action.fulfilling_payment_id is None:
+        fulfilling_rzp_id = normalized.get("razorpay_payment_id")
+        if fulfilling_rzp_id:
+            fulfilling_payment = db.query(Payment).filter(
+                Payment.razorpay_payment_id == fulfilling_rzp_id,
+                Payment.merchant_id == merchant_id,
+            ).first()
+            if fulfilling_payment is not None:
+                action.fulfilling_payment_id = fulfilling_payment.id
 
     if plink_status in ("expired", "cancelled"):
         return mark_link_terminal(db, action, plink_status, event_id)

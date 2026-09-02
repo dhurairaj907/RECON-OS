@@ -51,6 +51,7 @@ def build_proposal(db: Session, case: RecoveryCase) -> ActionProposal:
         test_mode=bool(adapter.test_mode),
         razorpay_configured=adapter.is_configured(),
         simulator_enabled=bool(settings.RECON_SIMULATOR_ENABLED),
+        automatic_execution_enabled=bool(settings.AUTOMATIC_ACTION_EXECUTION_ENABLED),
     )
 
     ci = _latest_intelligence(db, case.id)

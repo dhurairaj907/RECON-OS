@@ -24,7 +24,7 @@ import {
 } from "lucide-react";
 import dynamic from "next/dynamic";
 import { api } from "@/lib/api";
-import { IntelligenceEnvelope, RecoveryAction } from "@/lib/types";
+import { IntelligenceEnvelope, IntentResult, RecoveryAction } from "@/lib/types";
 import { cn, formatDateTime, formatINR } from "@/lib/utils";
 import { deriveCasePipeline, type StageStatus } from "@/components/spatial/pipeline-model";
 import { NumberedSteps, type NumberedStep } from "@/components/modules/NumberedSteps";
@@ -114,6 +114,287 @@ function SourceBadge({ source }: { source?: string | null }) {
       <Icon className="w-3 h-3" />
       {source}
     </span>
+  );
+}
+
+const intentTone: Record<string, { tone: string; icon: any; label: string }> = {
+  RECOVERABLE: { tone: "text-status-success border-status-success-border bg-status-success-bg", icon: ThumbsUp, label: "RECOVERABLE" },
+  AMBIGUOUS: { tone: "text-status-warning border-status-warning-border bg-status-warning-bg", icon: HelpCircle, label: "AMBIGUOUS" },
+  INSUFFICIENT_EVIDENCE: { tone: "text-fg-muted border-border bg-surface-elevated", icon: HelpCircle, label: "INSUFFICIENT EVIDENCE" },
+  LIKELY_UNWILLING: { tone: "text-status-danger border-status-danger-border bg-status-danger-bg", icon: ThumbsDown, label: "LIKELY UNWILLING" },
+};
+
+/**
+ * Phase 10 — intent-aware recovery. Distinct from the recovery-PROBABILITY
+ * prediction above (how likely is this payment to recover?): this answers
+ * whether RECON has evidence the customer actually wants to be recovered.
+ * Purely explanatory — the Policy Engine already made its decision using
+ * this same evidence (see RULE_INTENT_UNWILLING / RULE_INTENT_EVIDENCE in
+ * the rules list below); nothing here can change that decision.
+ */
+function IntentSection({ intent }: { intent?: IntentResult | null }) {
+  if (!intent) return null;
+  const it = intentTone[intent.classification] || intentTone.AMBIGUOUS;
+  const IIcon = it.icon;
+  return (
+    <div className="space-y-2 border-t border-border/60 pt-4">
+      <SectionTitle>Recovery Intent</SectionTitle>
+      <div className="flex items-center justify-between">
+        <span className={cn("inline-flex items-center gap-1.5 text-xs font-mono font-semibold px-2.5 py-1 rounded border", it.tone)}>
+          <IIcon className="w-3.5 h-3.5" />
+          {it.label}
+        </span>
+        <span className="text-fg tabular-nums text-[12px] font-mono">{Math.round(intent.confidence * 100)}% confidence</span>
+      </div>
+      {(intent.positive_signals.length > 0 || intent.negative_signals.length > 0) && (
+        <div className="space-y-1">
+          <p className="text-[11px] font-mono text-fg-faint uppercase">Why</p>
+          {intent.positive_signals.map((s) => (
+            <div key={s.code} className="flex items-start gap-1.5 text-[12px] font-mono text-fg-secondary">
+              <span className="text-status-success">•</span>{s.description}
+            </div>
+          ))}
+          {intent.negative_signals.map((s) => (
+            <div key={s.code} className="flex items-start gap-1.5 text-[12px] font-mono text-fg-secondary">
+              <span className="text-status-danger">•</span>{s.description}
+            </div>
+          ))}
+        </div>
+      )}
+      <p className="text-[11px] font-mono text-fg-faint">
+        Evidence completeness {Math.round(intent.evidence_completeness * 100)}% · source {intent.provider}
+      </p>
+    </div>
+  );
+}
+
+const modelStatusTone: Record<string, string> = {
+  READY: "text-status-success border-status-success-border bg-status-success-bg",
+  EXPERIMENTAL: "text-status-warning border-status-warning-border bg-status-warning-bg",
+  DATA_LIMITED: "text-status-warning border-status-warning-border bg-status-warning-bg",
+  DISABLED: "text-fg-faint border-border bg-surface-elevated",
+};
+
+function ModelStatusBadge({ status }: { status?: string }) {
+  if (!status) return null;
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center rounded border px-1.5 py-0.5 text-[9px] font-mono font-semibold uppercase tracking-wide",
+        modelStatusTone[status] || "text-fg-muted border-border bg-surface-elevated"
+      )}
+    >
+      {status.replace(/_/g, " ")}
+    </span>
+  );
+}
+
+/**
+ * Phase 6 — advisory ML model predictions for this case. Deliberately
+ * rendered as its own section, visually distinct from the POLICY DECISION
+ * section above it: this data can never override or explain the policy
+ * verdict, it's additional context the deterministic Policy Engine never
+ * saw. Every value shown here comes straight from the model registry's own
+ * recorded status/version (see apps/api/ai/inference/service.py) — a
+ * DATA_LIMITED or EXPERIMENTAL model is labelled as such, never hidden.
+ */
+function AiPredictionsSection({ caseId }: { caseId: string }) {
+  const { data } = useSWR(
+    caseId ? `/api/v1/recovery-cases/${caseId}/ai-predictions` : null,
+    () => api.getCaseAiPredictions(caseId)
+  );
+  if (!data?.analyzed) return null;
+  const preds = data.predictions;
+  if (!preds) {
+    return (
+      <div className="space-y-2 border-t border-border/60 pt-4">
+        <SectionTitle>AI Model Predictions (Advisory)</SectionTitle>
+        <p className="text-[12px] font-mono text-fg-faint">
+          {data.note || "No trained models were available for this analysis run."}
+        </p>
+      </div>
+    );
+  }
+
+  const recoveryProb = preds.recovery_probability;
+  const recoveryTime = preds.recovery_time;
+  const topStrategy = preds.strategy_ranking?.ranking?.[0];
+  const topStrategyValue = preds.expected_recovery_value?.ranking?.find(
+    (v: any) => v.strategy === topStrategy?.strategy
+  );
+  const topChannel = preds.communication_channel?.ranking?.[0];
+  const churn = preds.customer_recovery;
+  const anomaly = preds.anomaly;
+
+  type Card = { label: string; value: string; status?: string; version?: string; realWorldValidation?: string };
+  const opportunity: Card[] = [];
+  const evidence: Card[] = [];
+
+  if (recoveryProb) {
+    opportunity.push({
+      label: "Recovery Probability",
+      value: `${Math.round((recoveryProb.recovery_probability ?? 0) * 100)}%`,
+      status: recoveryProb.status, version: recoveryProb.model_version,
+      realWorldValidation: recoveryProb.real_world_validation,
+    });
+  }
+  if (topStrategyValue) {
+    opportunity.push({
+      label: "Estimated Recovery Value",
+      value: formatINR(topStrategyValue.expected_recovery_value ?? 0),
+    });
+  }
+  if (topStrategy) {
+    opportunity.push({
+      label: "Recommended Strategy",
+      value: `${topStrategy.strategy} (${Math.round((topStrategy.score ?? 0) * 100)}%)`,
+      status: preds.strategy_ranking.status, version: preds.strategy_ranking.model_version,
+      realWorldValidation: preds.strategy_ranking.real_world_validation,
+    });
+  }
+  if (recoveryTime) {
+    opportunity.push({
+      label: "Estimated Recovery Time",
+      value: `${(recoveryTime.expected_recovery_hours ?? 0).toFixed(1)}h`,
+      status: recoveryTime.status, version: recoveryTime.model_version,
+      realWorldValidation: recoveryTime.real_world_validation,
+    });
+  }
+  if (topChannel) {
+    opportunity.push({
+      label: "Recommended Channel",
+      value: `${topChannel.channel} (${Math.round((topChannel.score ?? 0) * 100)}%)`,
+      status: preds.communication_channel.status, version: preds.communication_channel.model_version,
+      realWorldValidation: preds.communication_channel.real_world_validation,
+    });
+  }
+
+  if (preds.diagnosis) {
+    evidence.push({
+      label: "Diagnosis",
+      value: `${preds.diagnosis.failure_category} (${Math.round((preds.diagnosis.confidence ?? 0) * 100)}%)`,
+      status: preds.diagnosis.status, version: preds.diagnosis.model_version,
+      realWorldValidation: preds.diagnosis.real_world_validation,
+    });
+  }
+  if (churn) {
+    evidence.push({
+      label: "Customer Recovery",
+      value: `${Math.round((churn.customer_recovery_probability ?? 0) * 100)}%`,
+      status: churn.status, version: churn.model_version,
+      realWorldValidation: churn.real_world_validation,
+    });
+  }
+  if (anomaly) {
+    evidence.push({
+      label: "Anomaly",
+      value: anomaly.is_anomaly ? `${anomaly.anomaly_score} (unusual pattern)` : `${anomaly.anomaly_score} (normal)`,
+      status: anomaly.status, version: anomaly.model_version,
+      realWorldValidation: anomaly.real_world_validation,
+    });
+  }
+  if (preds.message_response) {
+    evidence.push({
+      label: "Message Response",
+      value: `${Math.round((preds.message_response.response_probability ?? 0) * 100)}%`,
+      status: preds.message_response.status, version: preds.message_response.model_version,
+      realWorldValidation: preds.message_response.real_world_validation,
+    });
+  }
+
+  if (opportunity.length === 0 && evidence.length === 0) return null;
+
+  // A single, honest evidence-status summary — the worst (least-validated)
+  // level present across every model shown, so nothing is ever hidden behind
+  // an average or a best-case number.
+  const validationRank: Record<string, number> = { NONE: 0, INSUFFICIENT: 1, PARTIAL: 2, FULL: 3 };
+  const allValidations = [...opportunity, ...evidence].map((c) => c.realWorldValidation).filter(Boolean) as string[];
+  const worstValidation = allValidations.length
+    ? allValidations.reduce((worst, v) => (validationRank[v] < validationRank[worst] ? v : worst), allValidations[0])
+    : null;
+
+  const CardGrid = ({ title, cards }: { title: string; cards: Card[] }) =>
+    cards.length === 0 ? null : (
+      <div className="space-y-2">
+        <p className="text-[10px] font-mono text-fg-faint uppercase tracking-widest">{title}</p>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+          {cards.map((c) => (
+            <div key={c.label} className="rounded-lg border border-border bg-surface-subtle/40 p-2.5 space-y-1">
+              <div className="flex items-center justify-between gap-1">
+                <span className="text-[10px] font-mono text-fg-faint uppercase tracking-wide">{c.label}</span>
+                <ModelStatusBadge status={c.status} />
+              </div>
+              <p className="text-sm font-mono font-semibold text-fg">{c.value}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+
+  return (
+    <div className="space-y-4 border-t border-border/60 pt-4">
+      <div className="flex items-center justify-between">
+        <SectionTitle>AI Model Predictions (Advisory)</SectionTitle>
+        <span className="text-[11px] font-mono text-fg-faint">
+          feature v{preds.feature_version} · never overrides policy
+        </span>
+      </div>
+
+      <CardGrid title="Recovery Opportunity" cards={opportunity} />
+      <CardGrid title="AI Evidence" cards={evidence} />
+
+      {worstValidation && (
+        <div className="rounded-lg border border-status-warning-border/40 bg-status-warning-bg/30 px-3 py-2">
+          <p className="text-[11px] font-mono font-semibold text-status-warning uppercase tracking-wide">
+            Evidence Status: Real-world evidence — {worstValidation.replace(/_/g, " ")}
+          </p>
+          <p className="text-[11px] font-mono text-fg-faint leading-relaxed mt-1">
+            MODEL PREDICTION only — advisory context computed after and separate from the POLICY
+            DECISION shown above; the estimated recovery value is a business-decision estimate
+            (probability × amount × strategy multiplier − cost), never a guarantee of recovered
+            revenue. &ldquo;{worstValidation.replace(/_/g, " ")}&rdquo; means recon_dev.db does not
+            yet contain enough (or diverse enough) real outcomes to confirm at least one of these
+            models&apos; real-world accuracy — those numbers come from synthetic-data training only.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Phase-final polish: a real, chronological reconstruction of this case's
+ * lifecycle straight from the existing audit trail (GET /audit-logs?case_id=…,
+ * oldest first) — every row is a real AuditLog record, never an invented
+ * timestamp or step. Distinct from the "Case Lifecycle" NumberedSteps above
+ * (which shows current STAGE STATUS); this is the raw, ordered EVENT LOG.
+ */
+function CaseAuditTimeline({ caseId }: { caseId: string }) {
+  const { data } = useSWR(
+    caseId ? `/api/v1/audit-logs?case_id=${caseId}&limit=100` : null,
+    () => api.getAuditLogs({ caseId, limit: 100 })
+  );
+  const items = data?.items ? [...data.items].reverse() : [];
+  if (items.length === 0) return null;
+
+  return (
+    <div className="space-y-2 border-t border-border/60 pt-4">
+      <SectionTitle>Case Timeline (Audit Trail)</SectionTitle>
+      <div className="space-y-0 max-h-64 overflow-y-auto pr-1">
+        {items.map((a) => (
+          <div key={a.id} className="flex items-start gap-3 py-1.5 border-b border-border/30 last:border-0">
+            <span className="text-[11px] font-mono text-fg-faint shrink-0 w-16 tabular-nums">
+              {new Date(a.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+            </span>
+            <div className="min-w-0 flex-1">
+              <span className="text-[12px] font-mono font-semibold text-fg-secondary">{a.action}</span>
+              <p className="text-[11px] text-fg-faint truncate">{a.detail}</p>
+            </div>
+            <span className="text-[10px] font-mono text-fg-faint shrink-0">{a.actor}</span>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -259,18 +540,25 @@ function ActionSection({ env, caseId }: { env: IntelligenceEnvelope; caseId: str
               </p>
             </div>
           ) : verdict === "REJECTED" ? (
-            <p className="text-[12px] text-status-danger font-mono">
-              Policy REJECTED — no recovery action will be executed.
-            </p>
+            <div className="rounded border border-status-danger-border/40 bg-status-danger-bg/40 px-3 py-2 space-y-1">
+              <p className="text-[12px] font-mono text-status-danger font-semibold">
+                POLICY: REJECTED
+              </p>
+              <p className="text-[12px] text-fg-muted">
+                {env.policy?.reason} — ACTION: none created. No Payment Link, no
+                Razorpay call, no money movement. AI can recommend a strategy;
+                only the Policy Engine decides whether it is ever permitted.
+              </p>
+            </div>
           ) : (
             <>
               <div className="rounded-xl border border-hairline bg-surface-subtle/60 p-3 space-y-2">
                 <div className="flex items-center justify-between">
-                  <span className="text-sm font-mono font-semibold text-status-info">
-                    CREATE PAYMENT LINK
-                  </span>
                   <span className="inline-flex items-center gap-1 text-[11px] font-mono text-status-success">
-                    <Check className="w-3 h-3" /> POLICY APPROVED
+                    <Check className="w-3 h-3" /> POLICY: APPROVED
+                  </span>
+                  <span className="text-[11px] font-mono text-fg-faint">
+                    ACTION ENGINE: ready to execute
                   </span>
                 </div>
                 <div className="flex items-center justify-between text-[12px] font-mono">
@@ -280,10 +568,13 @@ function ActionSection({ env, caseId }: { env: IntelligenceEnvelope; caseId: str
                   </span>
                 </div>
                 <p className="text-[11px] text-fg-faint font-mono leading-relaxed">
-                  A failed Razorpay payment cannot be re-charged via API. The
-                  executable recovery action is a Test Mode Payment Link the
-                  customer pays on. Policy is re-checked server-side before any
-                  Razorpay call.
+                  Policy has already authorized this recovery — a failed Razorpay
+                  payment cannot be re-charged via API, so the Action Engine&apos;s
+                  executable recovery is a Test Mode Payment Link the customer pays
+                  on. The Action Engine independently re-checks Policy server-side
+                  the instant before it ever calls Razorpay — this button only
+                  triggers the SAME authorized path RECON runs automatically when
+                  auto-execution is enabled; it does not decide anything itself.
                 </p>
               </div>
               <button
@@ -292,9 +583,9 @@ function ActionSection({ env, caseId }: { env: IntelligenceEnvelope; caseId: str
                 className="inline-flex h-10 items-center gap-2 rounded-lg bg-accent px-4 font-mono text-sm font-medium text-white transition-colors hover:bg-accent-hover disabled:opacity-50"
               >
                 {busy === "create" ? (
-                  <><Loader2 className="w-4 h-4 animate-spin" /> Creating recovery action…</>
+                  <><Loader2 className="w-4 h-4 animate-spin" /> Action Engine executing…</>
                 ) : (
-                  <><Link2 className="w-4 h-4" /> Create Payment Link</>
+                  <><Link2 className="w-4 h-4" /> Execute Approved Recovery</>
                 )}
               </button>
             </>
@@ -328,6 +619,17 @@ function ActionSection({ env, caseId }: { env: IntelligenceEnvelope; caseId: str
               <span className="text-[11px] font-mono text-fg-faint">{action.action_type}</span>
             </div>
           </div>
+
+          {["EXECUTED", "EXECUTING", "WAITING_FOR_PAYMENT", "RECOVERED", "PARTIAL"].includes(uiState) && (
+            <p className="text-[11px] font-mono text-fg-faint">
+              ACTION ENGINE:{" "}
+              <span className="text-fg-secondary">
+                {action.automatic_execution_enabled
+                  ? "automatically executed (Policy-approved, no manual trigger required)"
+                  : "executed by the Action Engine on operator request"}
+              </span>
+            </p>
+          )}
 
           {uiState === "RECOVERED" && action.simulated && (
             <p className="text-[12px] font-mono text-status-warning/90 bg-status-warning-bg border border-status-warning-border/50 rounded px-2 py-1.5">
@@ -431,10 +733,13 @@ function ActionSection({ env, caseId }: { env: IntelligenceEnvelope; caseId: str
 
           {(uiState === "WAITING_FOR_PAYMENT" || uiState === "PARTIAL") && (
             <p className="text-[11px] font-mono text-fg-faint leading-relaxed">
-              Complete the test payment on the Razorpay link, then click{" "}
-              <span className="text-fg-muted">Confirm payment</span> — RECON checks the real
-              Razorpay status and only marks <span className="text-fg-muted">RECOVERED</span>{" "}
-              if Razorpay reports the link as paid in full. Revenue is not counted until then.
+              PAYMENT: Awaiting customer payment on the Razorpay link. VERIFICATION:
+              pending — RECON never marks a case RECOVERED on its own. After the
+              customer pays (in this local demo, use{" "}
+              <span className="text-fg-muted">Simulate Customer Payment</span> below), click{" "}
+              <span className="text-fg-muted">Check Razorpay for Payment</span> to have RECON
+              ask Razorpay directly; only a real Razorpay confirmation of the FULL amount can
+              set <span className="text-fg-muted">VERIFICATION: RECOVERED</span>.
             </p>
           )}
 
@@ -493,7 +798,7 @@ function ActionSection({ env, caseId }: { env: IntelligenceEnvelope; caseId: str
                 {busy === "confirm" ? (
                   <><Loader2 className="w-4 h-4 animate-spin" /> Checking Razorpay…</>
                 ) : (
-                  <><CheckCircle2 className="w-4 h-4" /> Confirm payment</>
+                  <><CheckCircle2 className="w-4 h-4" /> Check Razorpay for Payment</>
                 )}
               </button>
             )}
@@ -512,10 +817,10 @@ function ActionSection({ env, caseId }: { env: IntelligenceEnvelope; caseId: str
                 onClick={simulatePaid}
                 disabled={busy !== null}
                 className="inline-flex h-9 items-center gap-2 rounded-lg border border-status-warning-border/60 bg-status-warning-bg px-3.5 font-mono text-xs text-status-warning transition-colors hover:bg-status-warning-bg/70 disabled:opacity-50"
-                title="SIMULATOR ONLY — fabricates a payment_link.paid event. Not a real payment."
+                title="TEST/SIMULATED ONLY — sends a simulated Razorpay payment_link.paid event to RECON's real event pipeline. No real payment occurs."
               >
                 {busy === "simulate" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
-                Simulate (test only)
+                Simulate Customer Payment
               </button>
             )}
           </div>
@@ -830,6 +1135,9 @@ export function IntelligencePanel({ caseId, caseNumber }: Props) {
         </p>
       </div>
 
+      {/* RECOVERY INTENT (Phase 10) */}
+      <IntentSection intent={env.intent} />
+
       {/* POLICY DECISION */}
       <div className="space-y-3 border-t border-border/60 pt-4">
         <SectionTitle>Policy Decision</SectionTitle>
@@ -875,11 +1183,17 @@ export function IntelligencePanel({ caseId, caseNumber }: Props) {
         )}
       </div>
 
+      {/* AI MODEL PREDICTIONS (Phase 6 — advisory only) */}
+      <AiPredictionsSection caseId={caseId} />
+
       {/* ACTION (Phase 3 — ACT) */}
       <ActionSection env={env} caseId={caseId} />
 
       {/* COMMUNICATIONS (Phase 5) */}
       <CommunicationsSection caseId={caseId} />
+
+      {/* CASE TIMELINE — real audit trail, oldest first */}
+      <CaseAuditTimeline caseId={env.case_id} />
 
       {/* SOURCE */}
       <div className="border-t border-border/60 pt-3 flex flex-wrap items-center justify-between gap-1 text-[11px] font-mono text-fg-faint">

@@ -47,6 +47,7 @@ def predict_one(features: dict) -> dict | None:
         "model_name": MODEL_NAME,
         "model_version": metadata.version,
         "status": metadata.status,
+        "real_world_validation": metadata.real_world_validation,
         "failure_category": classes[top_idx],
         "confidence": round(float(proba[top_idx]), 4),
         "class_probabilities": {c: round(float(p), 4) for c, p in zip(classes, proba)},

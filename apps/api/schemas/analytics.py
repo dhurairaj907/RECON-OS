@@ -62,7 +62,18 @@ class AnalyticsMetrics(BaseModel):
     # rejection (a genuine dead end under current policy) — a real, computed
     # distinction from raw revenue_at_risk, not a duplicate of it.
     potential_recoverable_revenue: Decimal
+    # Phase 9: net of any later refund on the fulfilling payment — "REAL
+    # RECOVERED REVENUE" means revenue actually confirmed AND still held.
+    # See services/analytics_service.py::compute_analytics.
     revenue_recovered: Decimal
+    # Phase 9: the portion of gross recovered revenue later refunded —
+    # exposed separately so revenue_recovered's net figure is never
+    # confused with "nothing was ever refunded".
+    revenue_refunded: Decimal = Decimal("0.00")
+    # Phase 9: count of RECONCILIATION_MISMATCH / PAYMENT_STATE_RECONCILIATION_MISMATCH
+    # audit rows for this organization — see GET /api/v1/reconciliation/mismatches
+    # for the full list.
+    reconciliation_mismatches_total: int = 0
     simulated_revenue_recovered: Decimal
     recovery_rate: float
     average_recovery_probability: Optional[float] = None

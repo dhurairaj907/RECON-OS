@@ -136,3 +136,36 @@ def test_unsigned_webhook_allowed_with_explicit_dev_opt_in(client, monkeypatch, 
     r = client.post("/api/v1/webhooks/razorpay", content=raw,
                     headers={"Content-Type": "application/json"})
     assert r.status_code == 200
+
+
+def test_webhook_resolves_to_correct_organization_when_a_second_one_exists(
+    client, sample_payment_failed_payload, make_signature, monkeypatch, webhook_secret, db_session
+):
+    """Phase 8 regression: `resolve_connected_merchant` replaced the old
+    `seed_default_merchant` ("whichever merchant the DB returns first", no
+    ordering) — this is the exact latent-bug scenario it fixes. A second
+    organization/merchant existing must never cause a real webhook to be
+    misattributed away from the platform's actual connected organization."""
+    from database import get_org_merchant
+    from models.organization import Organization
+
+    other_org = Organization(name="A Second, Unrelated Organization")
+    db_session.add(other_org)
+    db_session.commit()
+    get_org_merchant(db_session, other_org)  # creates its merchant row too
+
+    monkeypatch.setattr(settings, "RAZORPAY_WEBHOOK_SECRET", webhook_secret)
+    raw_body = json.dumps(sample_payment_failed_payload).encode("utf-8")
+    sig = make_signature(raw_body)
+
+    response = client.post(
+        "/api/v1/webhooks/razorpay", content=raw_body,
+        headers={"Content-Type": "application/json", "X-Razorpay-Signature": sig},
+    )
+    assert response.status_code == 200
+    assert response.json()["case_number"] is not None
+
+    # The case must show up under the authenticated (Test Organization) user's
+    # own recovery-case list, NOT be silently attributed to the other org.
+    cases = client.get("/api/v1/recovery-cases").json()
+    assert cases["total"] == 1

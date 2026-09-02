@@ -37,11 +37,24 @@ STATUS_READY = "READY"                # trained on adequate synthetic data, real
 STATUS_DATA_LIMITED = "DATA_LIMITED"  # even the synthetic label signal is thin; treat cautiously
 STATUS_EXPERIMENTAL = "EXPERIMENTAL"  # pipeline works but no real-world validation yet
 
+# `status` above answers "is this model adequately trained/validated on its
+# OWN development distribution (synthetic or real)?" — a SEPARATE, ORTHOGONAL
+# question is "has this model's real-world discriminative power actually
+# been checked against real outcomes?". A model can be STATUS_READY (good
+# synthetic training) while still being REAL_VALIDATION_NONE/INSUFFICIENT —
+# conflating the two would hide exactly the honesty gap this field exists to
+# surface (e.g. recovery_probability: solid synthetic training, but recon_dev.db
+# currently has zero real negative-outcome examples to validate against).
+REAL_VALIDATION_NONE = "NONE"                  # zero real samples used in evaluation at all
+REAL_VALIDATION_INSUFFICIENT = "INSUFFICIENT"  # real samples exist but too few/imbalanced to validate
+REAL_VALIDATION_PARTIAL = "PARTIAL"            # a real held-out evaluation exists but is still small/narrow
+REAL_VALIDATION_FULL = "FULL"                  # validated on a real, sufficiently sized, balanced held-out set
+
 
 @dataclass
 class ModelMetadata:
     model_name: str
-    version: str
+    version: str                   # MODEL_VERSION — bumped on algorithm/training-code changes
     training_timestamp: str
     dataset_type: str              # "SYNTHETIC" | "REAL" | "MIXED"
     feature_version: str
@@ -53,6 +66,12 @@ class ModelMetadata:
     label_classes: Optional[list] = None
     real_sample_count: int = 0
     notes: str = ""
+    # DATASET_VERSION — bumped only when the dataset generation/extraction
+    # logic itself changes (synthetic assumption tables, real-data query
+    # shape), independent of the model's own algorithm/training-code version.
+    dataset_version: str = "1.0"
+    # See REAL_VALIDATION_* constants above — orthogonal to `status`.
+    real_world_validation: str = REAL_VALIDATION_NONE
 
     def to_dict(self) -> dict:
         return asdict(self)

@@ -44,9 +44,17 @@ from ai.features.feature_builder import (
 from ai.models import churn_model, diagnosis_model, recovery_probability_model, recovery_time_model
 from ai.models import strategy_ranking_model, channel_model, response_model
 from ai.models.anomaly_model import AnomalyModel
-from ai.models.base import ModelMetadata, ModelRegistry, STATUS_DATA_LIMITED, STATUS_EXPERIMENTAL, STATUS_READY, TabularModel, now_iso
+from ai.models.base import (
+    ModelMetadata, ModelRegistry, STATUS_DATA_LIMITED, STATUS_EXPERIMENTAL, STATUS_READY, TabularModel, now_iso,
+    REAL_VALIDATION_NONE, REAL_VALIDATION_INSUFFICIENT,
+)
 
 VERSION = "v1"
+# Bumped only when the dataset generation/extraction logic itself changes
+# (synthetic assumption tables in ai/data/synthetic.py, or the real-data
+# query shape in ai/data/real_data.py) — independent of VERSION above, which
+# tracks the model/training-code itself.
+DATASET_VERSION = "1.0"
 MIN_REAL_SAMPLES_FOR_TRAINING = 200   # far above recon_dev.db's current ~38 cases — documents the bar honestly
 
 
@@ -121,12 +129,16 @@ def train_diagnosis(case_df: pd.DataFrame, real_n: int):
         algorithm=type(model.pipeline.named_steps["model"]).__name__,
         training_sample_count=len(X_train), validation_sample_count=len(X_test),
         metrics=metrics, status=STATUS_READY, label_classes=sorted(set(y.tolist())),
-        real_sample_count=real_n,
+        real_sample_count=real_n, dataset_version=DATASET_VERSION,
+        real_world_validation=REAL_VALIDATION_INSUFFICIENT if real_n > 0 else REAL_VALIDATION_NONE,
         notes="Text-derived keyword features only (no failure_category input) — see "
               "ai/features/feature_builder.py. NOTE: near-100% accuracy here reflects that the "
               "SYNTHETIC failure-text templates use non-overlapping keyword sets per category "
               "(by construction) — this is a statement about the synthetic dataset's difficulty, "
-              "NOT a claim about real-world diagnosis-text ambiguity, which is materially harder.",
+              "NOT a claim about real-world diagnosis-text ambiguity, which is materially harder. "
+              f"The {real_n} real labeled cases in recon_dev.db are heavily skewed toward one "
+              "category (AUTH_TIMEOUT) with zero real examples of BANK_DECLINE, RISK_BLOCK, or "
+              "USER_ABANDONED — real-world class coverage is unverified for those categories.",
     )
     ModelRegistry.save(diagnosis_model.MODEL_NAME, VERSION, model, metadata)
     print(f"  saved -> ai/artifacts/{diagnosis_model.MODEL_NAME}/{VERSION}")
@@ -153,6 +165,12 @@ def train_recovery_probability(case_df: pd.DataFrame, real_n: int):
         algorithm=type(model.pipeline.named_steps["model"]).__name__,
         training_sample_count=len(X_train), validation_sample_count=len(X_test),
         metrics=metrics, status=STATUS_READY, label_classes=[False, True], real_sample_count=real_n,
+        dataset_version=DATASET_VERSION, real_world_validation=REAL_VALIDATION_INSUFFICIENT,
+        notes=f"IMPORTANT: all {real_n} real labeled cases in recon_dev.db currently have "
+              f"recovered=True — there are ZERO real negative (not-recovered) examples in the "
+              f"database (no FAILED/PARTIAL/EXPIRED/CANCELLED settled outcomes exist yet). A "
+              f"single-class real sample cannot validate a binary classifier's real-world "
+              f"discriminative power at all; all metrics above are SYNTHETIC-only evidence.",
     )
     ModelRegistry.save(recovery_probability_model.MODEL_NAME, VERSION, model, metadata)
     print(f"  saved -> ai/artifacts/{recovery_probability_model.MODEL_NAME}/{VERSION}")
@@ -185,7 +203,8 @@ def train_recovery_time(case_df: pd.DataFrame, real_n: int):
         dataset_type=DATASET_TYPE_SYNTHETIC, feature_version=FEATURE_VERSION,
         algorithm=type(model.pipeline.named_steps["model"]).__name__,
         training_sample_count=len(X_train), validation_sample_count=len(X_test),
-        metrics=metrics, status=STATUS_EXPERIMENTAL, real_sample_count=real_n,
+        metrics=metrics, status=STATUS_EXPERIMENTAL, real_sample_count=real_n, dataset_version=DATASET_VERSION,
+        real_world_validation=REAL_VALIDATION_INSUFFICIENT if real_n > 0 else REAL_VALIDATION_NONE,
         notes="recon_dev.db has too few completed recoveries with timestamps for a real-data model; "
               "trained on synthetic recovery-time assumptions only — treat as illustrative, not calibrated.",
     )
@@ -219,6 +238,7 @@ def train_customer_recovery(case_df: pd.DataFrame, real_n: int):
         algorithm=type(model.pipeline.named_steps["model"]).__name__,
         training_sample_count=len(X_train), validation_sample_count=len(X_test),
         metrics=metrics, status=STATUS_READY, label_classes=[False, True], real_sample_count=0,
+        dataset_version=DATASET_VERSION, real_world_validation=REAL_VALIDATION_NONE,
         notes="Customer-grain aggregation; real recon_dev.db has too few repeat-customer cases to train on directly.",
     )
     ModelRegistry.save(churn_model.MODEL_NAME, VERSION, model, metadata)
@@ -262,8 +282,12 @@ def train_anomaly(case_df: pd.DataFrame):
         model_name="anomaly", version=VERSION, training_timestamp=now_iso(),
         dataset_type=DATASET_TYPE_SYNTHETIC, feature_version=FEATURE_VERSION,
         algorithm="IsolationForest", training_sample_count=len(train_idx), validation_sample_count=len(test_idx),
-        metrics=metrics, status=STATUS_EXPERIMENTAL, real_sample_count=0,
-        notes="Unsupervised — advisory only, never blocks a financial action. Real-world precision/recall unknown.",
+        metrics=metrics, status=STATUS_EXPERIMENTAL, real_sample_count=0, dataset_version=DATASET_VERSION,
+        real_world_validation=REAL_VALIDATION_NONE,
+        notes="Unsupervised — advisory only, never blocks a financial action. Real-world precision/recall "
+              "unknown. This is NOT a fraud-detection model — 'anomaly' means statistically unusual "
+              "case features (amount/attempt-count outliers), never a fraud claim; no real fraud "
+              "labels exist in recon_dev.db.",
     )
     path = ModelRegistry.path_for("anomaly", VERSION)
     model.save(path)
@@ -303,6 +327,8 @@ def train_channel_and_response(case_df: pd.DataFrame, real_comm_n: int):
             algorithm=type(model.pipeline.named_steps["model"]).__name__,
             training_sample_count=len(X_train), validation_sample_count=len(X_test),
             metrics=metrics, status=status, label_classes=[False, True], real_sample_count=real_comm_n,
+            dataset_version=DATASET_VERSION,
+            real_world_validation=REAL_VALIDATION_INSUFFICIENT if real_comm_n > 0 else REAL_VALIDATION_NONE,
             notes=f"Real recon_dev.db communications rows found: {real_comm_n} — far below any usable "
                   f"training threshold; trained entirely on synthetic engagement assumptions."
                   + ("" if status != STATUS_DATA_LIMITED else " Marked DATA_LIMITED per Phase 6 directive."),
@@ -337,8 +363,11 @@ def train_strategy_ranking(case_df: pd.DataFrame):
         algorithm=type(model.pipeline.named_steps["model"]).__name__,
         training_sample_count=len(X_train), validation_sample_count=len(X_test),
         metrics=metrics, status=STATUS_READY, label_classes=[False, True], real_sample_count=0,
+        dataset_version=DATASET_VERSION, real_world_validation=REAL_VALIDATION_NONE,
         notes="Trained on counterfactual (case, candidate strategy) synthetic trials; ranking at "
-              "inference scores every real StrategyAction candidate with this one model.",
+              "inference scores every real StrategyAction candidate with this one model. No real "
+              "(case, alternative-strategy) counterfactual outcomes exist in recon_dev.db — RECON "
+              "only ever observes the ONE strategy it actually chose per case, never the others.",
     )
     ModelRegistry.save(strategy_ranking_model.MODEL_NAME, VERSION, model, metadata)
     print(f"  saved -> ai/artifacts/{strategy_ranking_model.MODEL_NAME}/{VERSION}")
@@ -358,7 +387,16 @@ def main() -> int:
         try:
             real_case_df = extract_real_case_dataset(db)
             from models.communication import Communication
-            real_comm_n = db.query(Communication).count()
+            from models.recovery_action import RecoveryAction
+            # Exclude communications tied to a SIMULATED action — same
+            # test-lane exclusion as extract_real_case_dataset() above, so a
+            # Simulator/evaluation run never inflates the "real" comms count.
+            real_comm_n = (
+                db.query(Communication)
+                .outerjoin(RecoveryAction, Communication.recovery_action_id == RecoveryAction.id)
+                .filter((Communication.recovery_action_id.is_(None)) | (RecoveryAction.simulated.is_(False)))
+                .count()
+            )
         finally:
             db.close()
     except Exception as e:

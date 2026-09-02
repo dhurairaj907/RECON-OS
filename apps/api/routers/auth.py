@@ -36,6 +36,7 @@ from auth import (
 )
 from config import settings
 from database import get_db
+from models.audit_log import AuditLog
 from models.organization import Organization
 from models.password_reset_token import PasswordResetToken
 from models.session import Session as SessionModel
@@ -165,6 +166,24 @@ def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db
 
     reset_link = f"{settings.FRONTEND_BASE_URL.rstrip('/')}/reset-password?token={raw_token}"
 
+    # Resolve the user's own organization/merchant purely to attach an audit
+    # entry — never trusted from the request, and this is the ONLY purpose:
+    # password-reset email delivery previously had NO persisted record at
+    # all (it called the provider directly, bypassing the Communication/
+    # audit trail every other RECON message goes through), which is exactly
+    # why a delivery problem could go completely unobserved. This does not
+    # create a Communication row (a password reset isn't a recovery-case
+    # communication and has no case/action/customer to attach one to) — it
+    # adds the missing AUDIT record so "did RECON even try to send this" is
+    # always answerable.
+    membership = db.query(UserOrganization).filter(UserOrganization.user_id == user.id).first()
+    merchant_id = None
+    if membership is not None:
+        from database import get_org_merchant
+        org = db.query(Organization).filter(Organization.id == membership.organization_id).first()
+        if org is not None:
+            merchant_id = get_org_merchant(db, org).id
+
     if settings.RECON_COMMUNICATIONS_MODE == "real":
         provider = get_communication_provider("EMAIL")
         result = provider.send(
@@ -182,10 +201,27 @@ def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db
             logger.warning("Password reset email could not be sent for %s: %s", user.email, result.error_code)
         else:
             logger.info("Password reset email sent for %s via %s", user.email, result.provider)
+        if merchant_id is not None:
+            db.add(AuditLog(
+                merchant_id=merchant_id, actor="AUTH_SERVICE",
+                action="PASSWORD_RESET_EMAIL_SENT" if result.ok else "PASSWORD_RESET_EMAIL_FAILED",
+                detail=(f"Password reset email {'sent' if result.ok else 'failed'} for {user.email} "
+                       f"via {result.provider or 'SMTP_EMAIL'}"
+                       + (f" ({result.error_code})" if not result.ok else "")),
+                metadata_json={"provider": result.provider, "error_code": result.error_code},
+            ))
+            db.commit()
     else:
         # Dev-safe: fake mode only, logged server-side only, never returned to the client.
         logger.info("[DEV] Password reset requested for %s — reset token (dev-log only, fake mode): %s",
                    user.email, raw_token)
+        if merchant_id is not None:
+            db.add(AuditLog(
+                merchant_id=merchant_id, actor="AUTH_SERVICE", action="PASSWORD_RESET_EMAIL_SENT",
+                detail=f"Password reset requested for {user.email} (FAKE mode — no real email sent)",
+                metadata_json={"provider": "FAKE_EMAIL", "mode": "fake"},
+            ))
+            db.commit()
 
     return generic
 

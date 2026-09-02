@@ -5,6 +5,7 @@ Query the immutable system audit trail.
 """
 
 from typing import Optional
+from uuid import UUID
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
@@ -24,6 +25,7 @@ def list_audit_logs(
     action: Optional[str] = Query(None, description="Filter by action"),
     actor: Optional[str] = Query(None, description="Filter by actor"),
     search: Optional[str] = Query(None, description="Search in detail text"),
+    case_id: Optional[str] = Query(None, description="Filter to one recovery case's audit trail"),
     ctx: AuthContext = Depends(get_auth_context),
     db: Session = Depends(get_db),
 ):
@@ -39,6 +41,11 @@ def list_audit_logs(
         query = query.filter(AuditLog.actor == actor)
     if search:
         query = query.filter(AuditLog.detail.ilike(f"%{search}%"))
+    if case_id:
+        try:
+            query = query.filter(AuditLog.recovery_case_id == UUID(case_id))
+        except ValueError:
+            query = query.filter(AuditLog.recovery_case_id.is_(None))  # invalid id -> no matches, never all rows
 
     total = query.count()
     items = query.order_by(desc(AuditLog.created_at)).offset((page - 1) * limit).limit(limit).all()

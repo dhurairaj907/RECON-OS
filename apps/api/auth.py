@@ -104,20 +104,49 @@ def destroy_session(db: DBSession, raw_token: str) -> None:
     db.commit()
 
 
+def _cookie_attrs() -> tuple[bool, str]:
+    """
+    Resolves (secure, samesite) from settings — see config.py's
+    SESSION_COOKIE_SECURE / SESSION_COOKIE_SAMESITE for the full rationale.
+
+    Browsers REQUIRE `Secure` on any `SameSite=None` cookie and silently
+    DROP the cookie entirely if that pairing is violated — so `secure` is
+    forced true whenever samesite is "none", regardless of
+    SESSION_COOKIE_SECURE, rather than trusting the two settings to always
+    be configured consistently. This can only make the cookie MORE
+    restrictive than requested, never less: it never turns a `none` samesite
+    request into `lax`/`strict`, and never turns `secure=False` into a
+    genuinely insecure `SameSite=None` cookie (which wouldn't work anyway).
+    """
+    samesite = (settings.SESSION_COOKIE_SAMESITE or "lax").strip().lower()
+    if samesite not in ("lax", "strict", "none"):
+        logger.warning(
+            "SESSION_COOKIE_SAMESITE=%r is not one of lax/strict/none — falling back to 'lax'.",
+            settings.SESSION_COOKIE_SAMESITE,
+        )
+        samesite = "lax"
+    secure = bool(settings.SESSION_COOKIE_SECURE) or samesite == "none"
+    return secure, samesite
+
+
 def set_session_cookie(response: Response, raw_token: str) -> None:
+    secure, samesite = _cookie_attrs()
     response.set_cookie(
         key=settings.SESSION_COOKIE_NAME,
         value=raw_token,
         httponly=True,
-        secure=settings.SESSION_COOKIE_SECURE,
-        samesite="lax",
+        secure=secure,
+        samesite=samesite,
         max_age=settings.SESSION_EXPIRY_HOURS * 3600,
         path="/",
     )
 
 
 def clear_session_cookie(response: Response) -> None:
-    response.delete_cookie(key=settings.SESSION_COOKIE_NAME, path="/")
+    secure, samesite = _cookie_attrs()
+    response.delete_cookie(
+        key=settings.SESSION_COOKIE_NAME, path="/", secure=secure, samesite=samesite,
+    )
 
 
 # ---------------------------------------------------------------------------

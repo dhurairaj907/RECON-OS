@@ -26,6 +26,7 @@ import smtplib
 import uuid
 from dataclasses import dataclass
 from email.mime.text import MIMEText
+from email.utils import make_msgid
 from typing import Optional
 
 import httpx
@@ -88,6 +89,17 @@ class FakeWhatsAppProvider(CommunicationProvider):
         return ProviderResult(ok=True, status="SENT", provider=self.name, provider_message_id=msg_id)
 
 
+def _strip_angle_brackets(value: str) -> str:
+    """RFC 5322 Message-ID header values look like '<id@domain>'; this
+    canonicalizes to the bare 'id@domain' form so it compares equal
+    regardless of which form a webhook later reports it in — see
+    services/communications/brevo_webhook.py's matching canonicalization."""
+    v = (value or "").strip()
+    if v.startswith("<") and v.endswith(">"):
+        v = v[1:-1]
+    return v
+
+
 # ---------------------------------------------------------------------------
 # Real providers — env-configured only, never invented, never committed
 # ---------------------------------------------------------------------------
@@ -106,6 +118,17 @@ class SmtpEmailProvider(CommunicationProvider):
         msg["Subject"] = subject
         msg["From"] = settings.SMTP_FROM_EMAIL
         msg["To"] = to
+        # RECON-owned, RFC 5322 Message-ID — generated with stdlib
+        # email.utils.make_msgid() (no new dependency), scoped to the
+        # sending domain rather than this machine's hostname. This is the
+        # ONLY correlation identifier RECON's SMTP path can obtain at send
+        # time (smtplib.sendmail() itself returns none); whether the
+        # configured relay (e.g. Brevo) echoes this exact value back in its
+        # delivery webhook is verified separately, never assumed here — see
+        # services/communications/brevo_webhook.py.
+        from_domain = settings.SMTP_FROM_EMAIL.rsplit("@", 1)[-1] if "@" in settings.SMTP_FROM_EMAIL else None
+        message_id = _strip_angle_brackets(make_msgid(domain=from_domain))
+        msg["Message-ID"] = f"<{message_id}>"
         try:
             if settings.SMTP_USE_SSL:
                 server_cm = smtplib.SMTP_SSL(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10)
@@ -117,7 +140,7 @@ class SmtpEmailProvider(CommunicationProvider):
                 if settings.SMTP_USERNAME:
                     server.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
                 server.sendmail(settings.SMTP_FROM_EMAIL, [to], msg.as_string())
-            return ProviderResult(ok=True, status="SENT", provider=self.name)
+            return ProviderResult(ok=True, status="SENT", provider=self.name, provider_message_id=message_id)
         except smtplib.SMTPAuthenticationError:
             logger.warning("SMTP authentication failed for %s", settings.SMTP_USERNAME)
             return ProviderResult(ok=False, provider=self.name, error_code="SMTP_AUTH_ERROR",

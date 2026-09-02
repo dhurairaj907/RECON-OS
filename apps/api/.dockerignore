@@ -1,0 +1,48 @@
+# RECON OS — backend Docker build context exclusions
+# Keeps the image lean and prevents local-only / sensitive files from ever
+# being baked into a built image. Nothing here is required by the build —
+# see apps/api/Dockerfile (installs from requirements-lock.txt, then COPY . .
+# for source only).
+
+# Python bytecode / caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Local virtual environments — never ship a host-built venv into the image;
+# the image builds its own via pip install.
+.venv/
+venv/
+env/
+
+# Secrets / local environment — the image reads config from real deployment
+# env vars (docker-compose `environment:` / your orchestrator), never a
+# copied .env file.
+.env
+.env.*
+!.env.example
+
+# Local dev database — never bake a developer's local SQLite data into a
+# built image.
+*.db
+*.sqlite3
+
+# VCS / editor / OS
+.git/
+.gitignore
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Regenerable ML artifacts (Phase 6) — advisory-only and designed to
+# gracefully degrade when absent; regenerate deliberately in the target
+# environment via `python -m ai.training.train` rather than shipping a
+# developer's local training run.
+ai/artifacts/
+evaluation/last_run.json

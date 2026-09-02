@@ -27,6 +27,7 @@ them, it does not replace them):
 
 from __future__ import annotations
 
+import hmac
 import logging
 import time
 from collections import defaultdict, deque
@@ -53,7 +54,13 @@ def require_api_key(x_recon_api_key: str | None = Header(default=None, alias="X-
             )
             _warned_unset = True
         return
-    if x_recon_api_key != settings.RECON_API_KEY:
+    # Constant-time comparison — a naive `!=` short-circuits on the first
+    # differing byte, which leaks (over many requests) how many leading
+    # characters of a guess are correct. hmac.compare_digest always takes
+    # time proportional to the LONGER input, never the position of the
+    # first mismatch. Never log x_recon_api_key or settings.RECON_API_KEY
+    # anywhere, including in this exception.
+    if not x_recon_api_key or not hmac.compare_digest(x_recon_api_key, settings.RECON_API_KEY):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing or invalid API key.",

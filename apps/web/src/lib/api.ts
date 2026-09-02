@@ -10,6 +10,7 @@ import {
   SimulateEventResponse,
   IntelligenceEnvelope,
   IntelligenceListItem,
+  IntentEnvelope,
   RecoveryAction,
   ProposeActionResponse,
   ExecuteActionResponse,
@@ -23,6 +24,10 @@ import {
   Communication,
   CommunicationListResponse,
   SendCommunicationResponse,
+  AiPredictionsResponse,
+  ConnectionsOverview,
+  PaymentReconciliation,
+  ReconciliationMismatchListResponse,
 } from "./types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -113,13 +118,14 @@ export const api = {
   getRecoveryCaseById: (id: string) => fetcher<RecoveryCase>(`/api/v1/recovery-cases/${id}`),
 
   // Audit Logs
-  getAuditLogs: (params?: { page?: number; limit?: number; action?: string; actor?: string; search?: string }) => {
+  getAuditLogs: (params?: { page?: number; limit?: number; action?: string; actor?: string; search?: string; caseId?: string }) => {
     const q = new URLSearchParams();
     if (params?.page) q.set("page", params.page.toString());
     if (params?.limit) q.set("limit", params.limit.toString());
     if (params?.action) q.set("action", params.action);
     if (params?.actor) q.set("actor", params.actor);
     if (params?.search) q.set("search", params.search);
+    if (params?.caseId) q.set("case_id", params.caseId);
     return fetcher<PaginatedResponse<AuditLog>>(`/api/v1/audit-logs?${q.toString()}`);
   },
 
@@ -139,6 +145,11 @@ export const api = {
     if (params?.band) q.set("band", params.band);
     return fetcher<PaginatedResponse<IntelligenceListItem>>(`/api/v1/intelligence?${q.toString()}`);
   },
+
+  // Intent-aware recovery (Phase 10) — also embedded in getCaseIntelligence's
+  // IntelligenceEnvelope.intent; this dedicated endpoint is for a focused read.
+  getCaseIntent: (caseId: string) =>
+    fetcher<IntentEnvelope>(`/api/v1/recovery-cases/${caseId}/intent`),
 
   // Actions (Phase 3 — ACT)
   getCaseActions: (caseId: string) =>
@@ -224,6 +235,24 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ channel, message_type: messageType }),
     }),
+
+  // AI model predictions (Phase 6) — advisory only, never authoritative;
+  // the Policy Engine's verdict above is computed independently of these.
+  getCaseAiPredictions: (caseId: string) =>
+    fetcher<AiPredictionsResponse>(`/api/v1/recovery-cases/${caseId}/ai-predictions`),
+
+  // Connections (read-only provider status)
+  getConnections: () => fetcher<ConnectionsOverview>("/api/v1/connections"),
+
+  // Reconciliation (Phase 9)
+  getPaymentReconciliation: (paymentId: string) =>
+    fetcher<PaymentReconciliation>(`/api/v1/payments/${paymentId}/reconciliation`),
+  getReconciliationMismatches: (params?: { page?: number; limit?: number }) => {
+    const q = new URLSearchParams();
+    if (params?.page) q.set("page", params.page.toString());
+    if (params?.limit) q.set("limit", params.limit.toString());
+    return fetcher<ReconciliationMismatchListResponse>(`/api/v1/reconciliation/mismatches?${q.toString()}`);
+  },
 
   // Health
   getHealth: () => fetcher<{ status: string; service: string; database: string }>("/api/v1/health"),

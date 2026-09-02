@@ -20,7 +20,25 @@ pytest>=8.3.0
 # Smallest production-sensible tabular ML stack — no deep learning framework.
 # Advisory-only predictions consumed by the existing deterministic Policy
 # Engine; models never touch Razorpay or execute actions directly.
-scikit-learn>=1.4.0
-numpy>=1.26.0
-pandas>=2.2.0
-joblib>=1.3.0
+#
+# EXACT pins, not ranges (Phase 8 ML compatibility fix): scikit-learn's own
+# docs are explicit that pickle/joblib model persistence is only reliably
+# compatible WITHIN the same scikit-learn version — HistGradientBoosting*
+# estimators (used by 7 of this project's 8 persisted models) embed a
+# reference to sklearn's internal, non-public `_loss` Cython module, whose
+# exact location/name is not guaranteed stable across releases. An unpinned
+# `>=` range let two environments on the same machine resolve to different
+# concrete versions (1.8.0 vs 1.9.0), and loading a 1.8.0-trained artifact
+# under 1.9.0 raised `ModuleNotFoundError: No module named '_loss'`. The fix
+# is not a version downgrade — it is pinning every environment (dev, CI,
+# deployment) to these EXACT versions, and re-running
+# `python -m ai.training.train` once per environment/deployment as a build
+# step so the persisted artifacts are always pickled by the same version
+# that will later unpickle them. See ai/artifacts/*/v1/metadata.json for the
+# training run that produced the currently-deployed artifacts under these
+# exact versions.
+scikit-learn==1.9.0
+numpy==2.5.2
+scipy==1.18.1
+pandas==3.0.5
+joblib==1.6.0

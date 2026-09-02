@@ -3,7 +3,7 @@ RECON OS — Recovery Case Model
 """
 
 import uuid
-from sqlalchemy import Column, String, Integer, Numeric, Text, DateTime, Index, ForeignKey, Uuid
+from sqlalchemy import Column, String, Integer, Numeric, Text, DateTime, Index, ForeignKey, Uuid, Boolean
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -35,6 +35,12 @@ class RecoveryCase(Base):
 
     attempt_count = Column(Integer, default=0, nullable=False)
     max_attempts = Column(Integer, default=3, nullable=False)
+
+    # True only for a case created from an event produced by the explicitly-
+    # enabled RECON simulator. A real, signature-verified Razorpay webhook
+    # can never set this — see integrations/razorpay/normalizer.py's
+    # `recon_simulated` field, which this is set from at creation time.
+    simulated = Column(Boolean, nullable=False, default=False)
 
     opened_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     resolved_at = Column(DateTime(timezone=True), nullable=True)

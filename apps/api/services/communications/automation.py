@@ -117,43 +117,66 @@ def _audit_recommendation(db: Session, merchant_id, case: RecoveryCase, rec: dic
     db.commit()
 
 
-def on_action_executed(db: Session, *, merchant_id, case: RecoveryCase, action: RecoveryAction) -> Optional[Communication]:
+def _fan_out_to_all_channels(db: Session, *, merchant_id, case: RecoveryCase, message_type: str) -> list[Communication]:
+    """
+    Attempts EVERY real channel (EMAIL, SMS, WHATSAPP) for one automated
+    recovery event — not just the AI's single top-ranked pick — matching a
+    real merchant's expectation that an approved automated recovery reaches
+    the customer on every channel actually available to them, not just one.
+
+    Each channel goes through send_communication() independently and is
+    wrapped in its own try/except: a failure or skip on one channel (no
+    contact info, opted out, provider down) can NEVER prevent the others
+    from being attempted, and can never abort the overall recovery. This is
+    the exact same send_communication() a manual send uses — no new
+    provider logic, no new eligibility rules; opt-out/contact-availability/
+    policy/rate-limit/idempotency checks all run per channel exactly as they
+    already do for a single manual send.
+    """
+    results: list[Communication] = []
+    for channel in _VALID_CHANNELS:
+        try:
+            comm = send_communication(
+                db, merchant_id=merchant_id, case=case, channel=channel,
+                message_type=message_type, decided_by="AUTOMATION",
+            )
+            if comm is not None:
+                results.append(comm)
+        except Exception:
+            logger.exception(
+                "Automatic %s send failed for case %s (non-fatal — other channels still attempted)",
+                channel, case.id,
+            )
+    return results
+
+
+def on_action_executed(db: Session, *, merchant_id, case: RecoveryCase, action: RecoveryAction) -> list[Communication]:
     """Called right after the Action Engine sets an action EXECUTED (a real
     Payment Link now exists). Every safety check still lives in
     decide_communication()/send_communication(), re-run fresh here exactly as
     a manual send would be — this hook only decides WHEN to ask, never
-    whether it's allowed."""
+    whether it's allowed. Fans out to every configured, eligible channel
+    (see _fan_out_to_all_channels) rather than picking just one."""
     if not settings.AUTOMATIC_COMMUNICATIONS_ENABLED:
-        return None
+        return []
     try:
         rec = ai_recommendation(db, case)
         _audit_recommendation(db, merchant_id, case, rec, "post-execution")
-        channel = _pick_channel(db, case)
-        return send_communication(
-            db, merchant_id=merchant_id, case=case, channel=channel,
-            message_type="PAYMENT_RECOVERY", decided_by="AUTOMATION",
-        )
     except Exception:
-        logger.exception("Automatic post-execution communication failed for case %s (non-fatal)", case.id)
-        return None
+        logger.exception("Automatic post-execution AI recommendation lookup failed for case %s (non-fatal)", case.id)
+    return _fan_out_to_all_channels(db, merchant_id=merchant_id, case=case, message_type="PAYMENT_RECOVERY")
 
 
-def on_recovery_verified(db: Session, *, merchant_id, case: RecoveryCase, action: RecoveryAction) -> Optional[Communication]:
+def on_recovery_verified(db: Session, *, merchant_id, case: RecoveryCase, action: RecoveryAction) -> list[Communication]:
     """Called right after apply_recovery() marks an action RECOVERED.
     decide_communication() already requires a verified RECOVERED outcome for
     this message type, so this can never fire early or on a fabricated
-    outcome."""
+    outcome. Fans out to every configured, eligible channel."""
     if not settings.AUTOMATIC_COMMUNICATIONS_ENABLED:
-        return None
-    try:
-        channel = _pick_channel(db, case)
-        return send_communication(
-            db, merchant_id=merchant_id, case=case, channel=channel,
-            message_type="PAYMENT_RECOVERED", decided_by="AUTOMATION",
-        )
-    except Exception:
-        logger.exception("Automatic post-recovery communication failed for case %s (non-fatal)", case.id)
-        return None
+        return []
+    return _fan_out_to_all_channels(db, merchant_id=merchant_id, case=case, message_type="PAYMENT_RECOVERED")
+
+
 
 
 @dataclass
@@ -212,6 +235,18 @@ def evaluate_reminder_sequence(db: Session, *, merchant_id, case: RecoveryCase) 
                        reason=f"Payment link outcome is {outcome} — reminder sequence stopped.")
     if outcome == "UNKNOWN":
         return SequenceDecision(False, "Outcome is UNKNOWN pending verification — no reminder sent yet.")
+
+    # Recovery Opportunity gate (reuses CaseIntelligence.prediction_band —
+    # the same LOW/MEDIUM/HIGH dimension services/intelligence/prediction.py
+    # already computes, never a duplicate classification). No repeated
+    # follow-up for a case whose latest evidence says recovery is unlikely —
+    # "maximize recoverable revenue, not maximize messages".
+    latest_ci = _latest_intelligence(db, case.id)
+    if latest_ci is not None and latest_ci.prediction_band == "LOW":
+        return _cancel(db, merchant_id=merchant_id, case=case, action=action,
+                       reason=f"Recovery opportunity is LOW (recovery_probability="
+                              f"{float(latest_ci.recovery_probability or 0):.0%}) — automated follow-up "
+                              f"pursuit stopped rather than sending a low-value reminder.")
 
     total_sent = (
         db.query(Communication)

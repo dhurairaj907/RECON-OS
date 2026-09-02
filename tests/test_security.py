@@ -82,3 +82,59 @@ def test_rate_limit_is_per_client(monkeypatch):
     security.rate_limit(req_b)   # client B is unaffected
     with pytest.raises(HTTPException):
         security.rate_limit(req_a)
+
+
+# ---------------------------------------------------------------------------
+# End-to-end, over the real HTTP surface (client fixture) — not just the
+# unit-level checks above. Confirms require_api_key is actually wired onto a
+# real financial-action route, and that read-only/health routes are exempt.
+# ---------------------------------------------------------------------------
+def test_cors_allows_configured_origin_and_rejects_others(client):
+    """Deployment-hardening: CORSMiddleware (main.py) must reflect
+    Access-Control-Allow-Origin only for an origin actually present in
+    CORS_ORIGINS — never a wildcard (incompatible with the credentialed
+    session cookie anyway; see main.py's own comment), and never silently
+    allow an arbitrary origin."""
+    allowed = settings.CORS_ORIGINS[0]
+    res_allowed = client.get("/api/v1/health", headers={"Origin": allowed})
+    assert res_allowed.headers.get("access-control-allow-origin") == allowed
+
+    res_disallowed = client.get("/api/v1/health", headers={"Origin": "https://not-allowed.example.com"})
+    assert res_disallowed.headers.get("access-control-allow-origin") is None
+
+
+def test_public_health_endpoint_requires_no_api_key(client, monkeypatch):
+    monkeypatch.setattr(settings, "RECON_API_KEY", "sekret123")
+    res = client.get("/api/v1/health")
+    assert res.status_code == 200
+
+
+def test_protected_endpoint_end_to_end_missing_invalid_valid_key(client, monkeypatch):
+    sim = client.post("/api/v1/simulator/events", json={
+        "event_type": "payment.failed", "customer_name": "API Key Test Customer",
+        "customer_email": "apikeytest@recon.test", "customer_phone": "+919800001111",
+        "amount": "2999.00", "payment_method": "upi", "failure_code": "BAD_REQUEST_ERROR",
+        "failure_reason": "payment_failed",
+        "error_description": "UPI handle authorization timeout on customer app",
+    })
+    assert sim.status_code == 201, sim.text
+    case_number = sim.json()["case_number"]
+    client.post(f"/api/v1/recovery-cases/{case_number}/intelligence:analyze")
+
+    monkeypatch.setattr(settings, "RECON_API_KEY", "sekret123")
+
+    missing = client.post(f"/api/v1/recovery-cases/{case_number}/actions/propose")
+    assert missing.status_code == 401
+    assert "sekret123" not in missing.text   # the key itself must never appear in a response
+
+    invalid = client.post(
+        f"/api/v1/recovery-cases/{case_number}/actions/propose",
+        headers={"X-RECON-API-KEY": "wrong-key"},
+    )
+    assert invalid.status_code == 401
+
+    valid = client.post(
+        f"/api/v1/recovery-cases/{case_number}/actions/propose",
+        headers={"X-RECON-API-KEY": "sekret123"},
+    )
+    assert valid.status_code == 200

@@ -18,6 +18,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import database
+from config import settings
 from database import Base
 from models.merchant import Merchant
 from models.recovery_action import RecoveryAction
@@ -35,13 +36,45 @@ from services.intelligence.orchestrator import run_intelligence
 
 @contextmanager
 def isolated_db():
-    """A fresh SQLite in-memory database + seeded merchant, torn down on exit."""
+    """
+    A fresh SQLite in-memory database + seeded merchant, torn down on exit.
+
+    SAFETY: this evaluation harness must NEVER be able to reach a real
+    external provider, regardless of whatever RECON_COMMUNICATIONS_MODE
+    happens to be set to in the ambient environment/.env (which, when this
+    module is run with CWD=apps/api, IS the real ".env" — including real
+    Brevo credentials, if configured). RECON_COMMUNICATIONS_MODE is forced
+    to "fake" for the duration of every scenario and restored afterward —
+    the same save/restore pattern already used for the database engine
+    above, and the same principle evaluation/fake_razorpay.py already
+    applies to the Razorpay adapter.
+
+    Phase 8 note, same incident class: AUTOMATIC_ACTION_EXECUTION_ENABLED
+    and AUTOMATIC_COMMUNICATIONS_ENABLED are now True in this deployment's
+    real .env (the fully-automatic chain is the deployment's default
+    posture). Most scenarios below construct a case and then deliberately
+    drive propose/execute/approve/reject themselves step-by-step to assert
+    specific intermediate states — an ambient auto-execute during
+    `run_intelligence()` would race ahead of that and make the action
+    already EXECUTED before the scenario's own steps run. Both flags are
+    forced to False for the duration of every scenario and restored
+    afterward, exactly like RECON_COMMUNICATIONS_MODE above. A scenario that
+    specifically wants to exercise the automatic path may still set
+    `settings.AUTOMATIC_ACTION_EXECUTION_ENABLED = True` locally within its
+    own function body, the same way individual pytest tests do.
+    """
     engine = create_engine(
         "sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool,
     )
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     prior_engine, prior_session_local = database.engine, database.SessionLocal
     database.engine, database.SessionLocal = engine, SessionLocal
+    prior_comm_mode = settings.RECON_COMMUNICATIONS_MODE
+    settings.RECON_COMMUNICATIONS_MODE = "fake"
+    prior_auto_execute = settings.AUTOMATIC_ACTION_EXECUTION_ENABLED
+    prior_auto_comms = settings.AUTOMATIC_COMMUNICATIONS_ENABLED
+    settings.AUTOMATIC_ACTION_EXECUTION_ENABLED = False
+    settings.AUTOMATIC_COMMUNICATIONS_ENABLED = False
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     merchant = Merchant(name="Evaluation Merchant")
@@ -54,6 +87,9 @@ def isolated_db():
         db.close()
         Base.metadata.drop_all(bind=engine)
         database.engine, database.SessionLocal = prior_engine, prior_session_local
+        settings.RECON_COMMUNICATIONS_MODE = prior_comm_mode
+        settings.AUTOMATIC_ACTION_EXECUTION_ENABLED = prior_auto_execute
+        settings.AUTOMATIC_COMMUNICATIONS_ENABLED = prior_auto_comms
 
 
 def payment_failed_payload(

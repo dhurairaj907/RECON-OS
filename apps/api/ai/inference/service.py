@@ -102,13 +102,22 @@ def predict_for_case(ctx, *, failure_category: str, customer: Optional[dict] = N
     try:
         prev_cases = int(source.get("previous_recovery_cases") or 0)
         prev_resolved = int(source.get("previous_resolved_cases") or 0)
+        successful_payments = int(source.get("customer_successful_payments") or 0)
+        failed_payments = int(source.get("customer_failed_payments") or 0)
+        settled_payments = successful_payments + failed_payments
+        lifetime_amount = float(source.get("customer_lifetime_amount") or 0)
+        # Genuine historical average-per-payment derived from this customer's
+        # REAL settled payment history (customer_lifetime_amount / count) —
+        # not the current case's amount. Falls back to the current case
+        # amount ONLY when the customer has zero payment history at all (a
+        # brand-new customer), where it's the sole honest estimate available,
+        # never silently substituted for a customer we DO have history for.
+        avg_amount = (lifetime_amount / settled_payments) if settled_payments > 0 else amount
         customer_features = build_customer_features({
             "total_prior_cases": prev_cases,
             "prior_recovered_count": prev_resolved,
             "prior_recovery_rate": (prev_resolved / prev_cases) if prev_cases else float(source.get("customer_success_rate") or 0.0),
-            # No separate historical-average-amount field exists on CaseContext;
-            # the current case amount is used as a documented best-effort proxy.
-            "avg_amount": amount,
+            "avg_amount": avg_amount,
             "customer_success_rate": source.get("customer_success_rate", 0.0),
             "customer_lifetime_amount": source.get("customer_lifetime_amount", 0),
             "customer_has_history": source.get("customer_has_history", False),
@@ -129,6 +138,7 @@ def predict_for_case(ctx, *, failure_category: str, customer: Optional[dict] = N
             df = pd.DataFrame([case_features])
             predictions["anomaly"] = {
                 "model_name": "anomaly", "model_version": anomaly_meta.version, "status": anomaly_meta.status,
+                "real_world_validation": anomaly_meta.real_world_validation,
                 "anomaly_score": round(float(anomaly_model.score(df)[0]), 4),
                 "is_anomaly": bool(anomaly_model.predict_is_anomaly(df)[0]),
             }

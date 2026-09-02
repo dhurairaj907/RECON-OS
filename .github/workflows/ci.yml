@@ -1,0 +1,82 @@
+name: CI
+
+# Validates the repository — it does NOT deploy anything. No production
+# deployment step exists in this workflow by design.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  backend:
+    name: Backend (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Matches apps/api/Dockerfile's base image (python:3.13-slim) and the
+      # interpreter requirements-lock.txt was verified against.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: "pip"
+          cache-dependency-path: apps/api/requirements-lock.txt
+
+      - name: Install backend dependencies (reproducible lock file)
+        working-directory: apps/api
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-lock.txt
+
+      # tests/ lives at the repo root and inserts apps/api onto sys.path
+      # itself (see tests/conftest.py) — run from the repo root, not apps/api.
+      - name: Run backend test suite
+        run: python -m pytest tests/ -q
+        env:
+          # Explicit, deliberately safe CI values — never real credentials.
+          # These match the framework's own defaults; set here only to make
+          # the safety intent unmistakable in the CI log, not because the
+          # suite requires them (every test that needs Razorpay/simulator/
+          # LLM behavior turns it on itself via monkeypatch with fake data).
+          RAZORPAY_TEST_MODE: "true"
+          RAZORPAY_KEY_ID: ""
+          RAZORPAY_KEY_SECRET: ""
+          RAZORPAY_WEBHOOK_SECRET: ""
+          RECON_SIMULATOR_ENABLED: "false"
+          RECON_COMMUNICATIONS_MODE: "fake"
+          LLM_ENABLED: "false"
+          AUTOMATIC_ACTION_EXECUTION_ENABLED: "false"
+          AUTOMATIC_COMMUNICATIONS_ENABLED: "false"
+          INTELLIGENCE_ENABLED: "false"
+
+  frontend:
+    name: Frontend (typecheck, lint, build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+
+      # Matches apps/web/Dockerfile's base image (node:20-alpine).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: TypeScript check
+        run: npx tsc --noEmit
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Production build
+        run: npm run build
+        env:
+          # A CI build only needs to succeed, not point at a real backend —
+          # never a real deployed API origin here.
+          NEXT_PUBLIC_API_URL: http://localhost:8000

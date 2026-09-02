@@ -41,6 +41,7 @@ def predict_one(features: dict) -> dict | None:
         "model_name": MODEL_NAME,
         "model_version": metadata.version,
         "status": metadata.status,
+        "real_world_validation": metadata.real_world_validation,
         "customer_recovery_probability": round(p, 4),
         "customer_risk_score": round(1.0 - p, 4),
     }

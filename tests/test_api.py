@@ -21,6 +21,24 @@ def test_health_endpoint(client):
     data = response.json()
     assert data["status"] == "online"
     assert data["service"] == "recon-os-api"
+    assert data["database"] == "healthy"
+
+
+def test_health_endpoint_returns_503_when_db_unhealthy(client, db_session, monkeypatch):
+    """Deployment-hardening: orchestrators (load balancers, k8s probes) key
+    off the HTTP status code, not the JSON body — a degraded DB must not
+    still report 200."""
+    def _boom(*args, **kwargs):
+        raise RuntimeError("simulated database connectivity failure — should never reach the client")
+
+    monkeypatch.setattr(db_session, "execute", _boom)
+    response = client.get("/health")
+    assert response.status_code == 503
+    data = response.json()
+    assert data["status"] == "degraded"
+    assert data["database"] == "unhealthy"
+    # The raw exception text must never leak into the public response.
+    assert "simulated database connectivity failure" not in json.dumps(data)
 
 
 def test_simulator_payment_failed_flow(client):
@@ -79,3 +97,60 @@ def test_simulator_payment_failed_flow(client):
     audit_res = client.get("/api/v1/audit-logs")
     assert audit_res.status_code == 200
     assert audit_res.json()["total"] >= 2  # RECOVERY_CASE_CREATED + EVENT_PROCESSED
+
+
+def test_audit_logs_filter_by_case_id(client):
+    """The case-level timeline filter (used by IntelligencePanel's Case
+    Timeline) must return only that case's own entries, never another
+    case's, and must fail safely (empty, not an error or all rows) for a
+    malformed id."""
+    sim_a = client.post("/api/v1/simulator/events", json={
+        "event_type": "payment.failed", "customer_name": "Case A Customer",
+        "customer_email": "case-a@example.com", "amount": "1999.00",
+        "payment_method": "upi", "failure_code": "BAD_REQUEST_ERROR",
+        "failure_reason": "payment_failed", "error_description": "timeout",
+    })
+    sim_b = client.post("/api/v1/simulator/events", json={
+        "event_type": "payment.failed", "customer_name": "Case B Customer",
+        "customer_email": "case-b@example.com", "amount": "2999.00",
+        "payment_method": "card", "failure_code": "GATEWAY_ERROR",
+        "failure_reason": "payment_failed", "error_description": "declined",
+    })
+    case_number_a = sim_a.json()["case_number"]
+    case_number_b = sim_b.json()["case_number"]
+    case_id_a = client.get(f"/api/v1/recovery-cases/{case_number_a}").json()["id"]
+
+    res_a = client.get(f"/api/v1/audit-logs?case_id={case_id_a}&limit=100")
+    assert res_a.status_code == 200
+    body_a = res_a.json()
+    assert body_a["total"] >= 1
+    assert all(item["recovery_case_id"] == case_id_a for item in body_a["items"])
+    assert all(case_number_b not in item["detail"] for item in body_a["items"])
+
+    # A malformed id must never fall back to returning every row.
+    malformed = client.get("/api/v1/audit-logs?case_id=not-a-real-uuid")
+    assert malformed.status_code == 200
+    assert malformed.json()["total"] == 0
+
+
+def test_audit_logs_case_filter_respects_organization_isolation(unauthenticated_client):
+    c = unauthenticated_client
+    c.post("/api/v1/auth/register", json={
+        "email": "audit-org-a@recon.test", "password": "Password123!", "organization_name": "Audit Org A",
+    })
+    sim = c.post("/api/v1/simulator/events", json={
+        "event_type": "payment.failed", "customer_name": "Org A Customer",
+        "customer_email": "orga@example.com", "amount": "1999.00",
+        "payment_method": "upi", "failure_code": "BAD_REQUEST_ERROR",
+        "failure_reason": "payment_failed", "error_description": "timeout",
+    })
+    case_number = sim.json()["case_number"]
+    case_id = c.get(f"/api/v1/recovery-cases/{case_number}").json()["id"]
+
+    c.cookies.clear()
+    c.post("/api/v1/auth/register", json={
+        "email": "audit-org-b@recon.test", "password": "Password123!", "organization_name": "Audit Org B",
+    })
+    denied = c.get(f"/api/v1/audit-logs?case_id={case_id}")
+    assert denied.status_code == 200
+    assert denied.json()["total"] == 0

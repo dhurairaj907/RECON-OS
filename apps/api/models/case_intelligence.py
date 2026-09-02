@@ -60,6 +60,8 @@ class CaseIntelligence(Base):
     diagnosis_json = Column(JSON_TYPE, nullable=True)
     prediction_json = Column(JSON_TYPE, nullable=True)
     strategy_json = Column(JSON_TYPE, nullable=True)
+    # Phase 10 — intent-aware recovery evidence (see services/intelligence/intent.py)
+    intent_json = Column(JSON_TYPE, nullable=True)
     policy_json = Column(JSON_TYPE, nullable=True)
 
     error_message = Column(Text, nullable=True)
@@ -74,6 +76,9 @@ class CaseIntelligence(Base):
     recovery_probability = Column(Numeric(5, 4), nullable=True, index=True)
     prediction_band = Column(String(10), nullable=True)
     recommended_action = Column(String(30), nullable=True, index=True)
+    # Phase 10
+    intent_classification = Column(String(30), nullable=True, index=True)
+    intent_confidence = Column(Numeric(5, 4), nullable=True)
     policy_verdict = Column(String(20), nullable=True, index=True)
     requires_human = Column(Boolean, nullable=False, default=False)
     risk_level = Column(String(10), nullable=True)

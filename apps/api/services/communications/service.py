@@ -114,11 +114,17 @@ def _audit(db: Session, merchant_id, case_id, event: str, detail: str, metadata:
                     action=event, detail=detail, metadata_json=metadata))
 
 
-def _idempotency_key(case: RecoveryCase, action: RecoveryAction | None, message_type: str) -> str:
+def _idempotency_key(case: RecoveryCase, action: RecoveryAction | None, channel: str, message_type: str) -> str:
     """Deterministic — derived only from existing identifiers, never a
     timestamp or random UUID, so the SAME logical recovery event always
-    produces the SAME key regardless of how many times it's evaluated."""
-    return f"{case.id}:{action.id if action else 'none'}:{message_type}"
+    produces the SAME key regardless of how many times it's evaluated.
+
+    Includes `channel`: EMAIL/SMS/WHATSAPP for the SAME message_type are
+    independent logical sends (different contact info, different provider,
+    tracked/can-fail independently — see the multi-channel automatic
+    recovery fan-out in services/communications/automation.py) — they must
+    never collide with each other's idempotency key."""
+    return f"{case.id}:{action.id if action else 'none'}:{channel}:{message_type}"
 
 
 def _skip(db: Session, *, merchant_id, case, action, customer, channel, message_type, status, skipped_reason, reason) -> Communication:
@@ -127,7 +133,7 @@ def _skip(db: Session, *, merchant_id, case, action, customer, channel, message_
         recovery_action_id=action.id if action else None,
         customer_id=customer.id if customer else None,
         channel=channel, message_type=message_type, status=status, skipped_reason=skipped_reason,
-        error_message=reason, idempotency_key=_idempotency_key(case, action, message_type),
+        error_message=reason, idempotency_key=_idempotency_key(case, action, channel, message_type),
     )
     db.add(comm)
     db.commit()
@@ -181,7 +187,7 @@ def send_communication(
     # idempotency_key stored on every row, so a caller retry, a duplicate
     # webhook-triggered send, or a second automation pass all land on the
     # exact same check — not three separate ones.
-    idem_key = _idempotency_key(case, action, message_type)
+    idem_key = _idempotency_key(case, action, channel, message_type)
     dup = (
         db.query(Communication)
         .filter(

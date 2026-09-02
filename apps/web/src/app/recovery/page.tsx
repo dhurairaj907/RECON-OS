@@ -11,6 +11,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonRow } from "@/components/ui/SkeletonLoader";
 import { SkeletonCards } from "@/components/ui/SkeletonLoader";
 import { IntelligencePanel } from "@/components/modules/IntelligencePanel";
+import { ReconciliationPanel } from "@/components/modules/ReconciliationPanel";
 import { CaseHeader } from "@/components/modules/CaseHeader";
 import { Reveal } from "@/components/spatial/Reveal";
 import { SectionBand } from "@/components/modules/SectionBand";
@@ -390,6 +391,11 @@ export default function RecoveryCasesPage() {
 
             {/* Phase 2 — THINK: RECON Intelligence */}
             <IntelligencePanel caseId={selectedCase.id} caseNumber={selectedCase.case_number} />
+
+            {/* Phase 9 — payment reconciliation (only when a payment exists) */}
+            {selectedCase.payment_id && (
+              <ReconciliationPanel paymentId={selectedCase.payment_id} />
+            )}
           </div>
         )}
       </DetailDrawer>

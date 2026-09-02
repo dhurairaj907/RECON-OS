@@ -13,6 +13,7 @@ from decimal import Decimal
 from sqlalchemy.orm import Session
 
 from config import settings
+from models.case_intelligence import CaseIntelligence
 from models.customer import Customer
 from models.payment import Payment
 from models.recovery_action import RecoveryAction
@@ -59,6 +60,70 @@ def _count_recent_customer_contacts(db: Session, case: RecoveryCase) -> int:
         )
         .count()
     )
+
+
+def _intent_signals(db: Session, case: RecoveryCase) -> dict:
+    """
+    Phase 10 — customer-level signals for intent evaluation. Scoped by
+    `customer_id` exactly like `_count_recent_customer_contacts` above: a
+    `Customer` row belongs to exactly one `Merchant`/organization by
+    construction, so this join can never cross an organization boundary.
+    """
+    if case.customer_id is None:
+        return {
+            "customer_expired_or_cancelled_links": 0,
+            "customer_opted_out": False,
+            "customer_refunded_payment_count": 0,
+            "customer_disputed_payment_count": 0,
+            "customer_prior_user_abandoned_count": 0,
+        }
+
+    customer = db.query(Customer).filter(Customer.id == case.customer_id).first()
+    opted_out = bool(customer and customer.opted_out_channels)
+
+    expired_or_cancelled = (
+        db.query(RecoveryAction)
+        .join(RecoveryCase, RecoveryAction.recovery_case_id == RecoveryCase.id)
+        .filter(
+            RecoveryCase.customer_id == case.customer_id,
+            RecoveryAction.outcome.in_(["EXPIRED", "CANCELLED"]),
+        )
+        .count()
+    )
+
+    refunded_count = (
+        db.query(Payment)
+        .filter(Payment.customer_id == case.customer_id, Payment.refunded_amount_paise > 0)
+        .count()
+    )
+    disputed_count = (
+        db.query(Payment)
+        .filter(Payment.customer_id == case.customer_id, Payment.dispute_status.isnot(None))
+        .count()
+    )
+
+    # Latest CaseIntelligence version per OTHER case for this customer.
+    rows = (
+        db.query(CaseIntelligence)
+        .join(RecoveryCase, CaseIntelligence.recovery_case_id == RecoveryCase.id)
+        .filter(RecoveryCase.customer_id == case.customer_id, RecoveryCase.id != case.id)
+        .order_by(CaseIntelligence.recovery_case_id, CaseIntelligence.version.desc())
+        .all()
+    )
+    latest_per_case: dict = {}
+    for r in rows:
+        latest_per_case.setdefault(r.recovery_case_id, r)
+    prior_user_abandoned = sum(
+        1 for r in latest_per_case.values() if (r.failure_category or "") == "USER_ABANDONED"
+    )
+
+    return {
+        "customer_expired_or_cancelled_links": expired_or_cancelled,
+        "customer_opted_out": opted_out,
+        "customer_refunded_payment_count": refunded_count,
+        "customer_disputed_payment_count": disputed_count,
+        "customer_prior_user_abandoned_count": prior_user_abandoned,
+    }
 
 
 def build_case_context(db: Session, case: RecoveryCase) -> CaseContext:
@@ -115,6 +180,7 @@ def build_case_context(db: Session, case: RecoveryCase) -> CaseContext:
     amount = Decimal(case.amount_at_risk or 0)
 
     contacts_last_window = _count_recent_customer_contacts(db, case)
+    intent_signals = _intent_signals(db, case)
 
     return CaseContext(
         case_id=str(case.id),
@@ -147,4 +213,5 @@ def build_case_context(db: Session, case: RecoveryCase) -> CaseContext:
         previous_recovery_attempts=prev_attempts,
         customer_contacts_last_24h=contacts_last_window,
         amount_band=amount_band(amount),
+        **intent_signals,
     )

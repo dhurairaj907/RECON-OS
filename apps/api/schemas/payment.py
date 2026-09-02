@@ -35,6 +35,12 @@ class PaymentResponse(PaymentBase):
     created_at: datetime
     updated_at: datetime
 
+    # --- Phase 9: reconciliation fields (additive, all Optional) ---
+    lifecycle_status: Optional[str] = None
+    reconciliation_status: Optional[str] = "UNVERIFIED"
+    refunded_amount_paise: int = 0
+    dispute_status: Optional[str] = None
+
 
 class PaymentListResponse(BaseModel):
     items: list[PaymentResponse]

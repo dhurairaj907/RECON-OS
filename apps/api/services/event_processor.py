@@ -26,6 +26,7 @@ from models.revenue_event import RevenueEvent
 from models.recovery_case import RecoveryCase
 from models.audit_log import AuditLog
 from integrations.razorpay.normalizer import normalize_razorpay_event
+from services.reconciliation import reconcile_payment_lifecycle
 from config import settings
 
 logger = logging.getLogger("recon.services.event_processor")
@@ -54,9 +55,15 @@ def process_inbound_event(
     merchant_id: UUID,
     source: str = "razorpay",
     event_id_override: Optional[str] = None,
+    signature_verified: Optional[bool] = None,
 ) -> tuple[RevenueEvent, Optional[RecoveryCase]]:
     """
     Main ingestion & processing pipeline for revenue events.
+
+    `signature_verified`: Phase 9 provenance flag for the event ledger —
+    pass True from a caller that already verified an HMAC webhook signature
+    (see routers/webhooks.py). Left None for the simulator / evaluation
+    harness paths, which never carry a real provider signature.
 
     Returns:
         tuple[RevenueEvent, Optional[RecoveryCase]]
@@ -65,6 +72,14 @@ def process_inbound_event(
     normalized = normalize_razorpay_event(raw_payload, event_id_override=event_id_override)
     event_id = normalized["razorpay_event_id"]
     event_type = normalized["event_type"]
+    # Phase 9 — the resolved payment/order/payment-link id this event is
+    # about, used to correlate across Payment/RecoveryCase/RecoveryAction/
+    # Communication by a stable provider identifier only.
+    correlation_id = (
+        normalized.get("razorpay_payment_id")
+        or normalized.get("razorpay_payment_link_id")
+        or normalized.get("razorpay_order_id")
+    )
 
     logger.info(f"Processing event {event_id} of type '{event_type}' from {source}")
 
@@ -101,6 +116,8 @@ def process_inbound_event(
         raw_payload=raw_payload,
         normalized_data=normalized,
         received_at=datetime.now(timezone.utc),
+        correlation_id=correlation_id,
+        signature_verified=signature_verified,
     )
     db.add(revenue_event)
     db.flush()
@@ -232,6 +249,73 @@ def process_inbound_event(
                     "payment_link event verification failed (non-fatal for Phase 1)"
                 )
 
+        # 6b. Phase 8 — reconciliation/mismatch foundation. Checked BEFORE the
+        # payment.failed/captured branches below: a dispute webhook's nested
+        # payment entity is typically still "captured", which would otherwise
+        # be misread by the generic captured-branch as a fresh successful
+        # payment. Deliberately conservative per the directive's §9: this
+        # never creates a case and never mutates amount_recovered/status —
+        # it only records a signal for a human to review. Event names
+        # verified against current official Razorpay webhook documentation
+        # (razorpay.com/docs/webhooks/refunds/, /docs/webhooks/disputes/).
+        elif str(event_type).startswith("refund.") or str(event_type).startswith("payment.dispute."):
+            related_case = (
+                db.query(RecoveryCase).filter_by(payment_id=payment.id).first()
+                if payment else None
+            )
+            recovery_case = related_case
+            kind = "refund" if str(event_type).startswith("refund.") else "dispute"
+
+            # Phase 9 — the payment's own lifecycle/mismatch tracking. A
+            # SEPARATE concern from the case-level "was this already
+            # RESOLVED" check right below: this only ever touches Payment
+            # fields (lifecycle_status, refunded_amount_paise,
+            # dispute_status), never RecoveryCase/RecoveryAction.
+            if payment:
+                reconcile_payment_lifecycle(
+                    db, payment, normalized, merchant_id=merchant_id,
+                    event_id=event_id,
+                    recovery_case_id=related_case.id if related_case else None,
+                )
+
+            if related_case is not None and related_case.status == "RESOLVED":
+                # Money is moving backward on a case RECON already believes is
+                # recovered — exactly the mismatch the directive calls out
+                # ("Provider: FAILED, RECON: CAPTURED -> investigate rather
+                # than blindly changing revenue"). Recorded, not auto-fixed.
+                audit = AuditLog(
+                    merchant_id=merchant_id,
+                    recovery_case_id=related_case.id,
+                    actor=source.upper(),
+                    action="PAYMENT_STATE_RECONCILIATION_MISMATCH",
+                    detail=(
+                        f"{event_type} received for payment {payment_rzp_id} on case "
+                        f"{related_case.case_number}, which RECON already marked RESOLVED "
+                        f"(amount_recovered=₹{related_case.amount_recovered}). Not "
+                        f"automatically reflected in revenue_recovered — review manually."
+                    ),
+                    metadata_json={
+                        "event_id": event_id, "event_type": event_type, "kind": kind,
+                        "case_number": related_case.case_number, "payment_id": payment_rzp_id,
+                    },
+                )
+            else:
+                audit = AuditLog(
+                    merchant_id=merchant_id,
+                    recovery_case_id=related_case.id if related_case else None,
+                    actor=source.upper(),
+                    action="REFUND_EVENT_RECEIVED" if kind == "refund" else "DISPUTE_EVENT_RECEIVED",
+                    detail=(
+                        f"{event_type} received for payment {payment_rzp_id or 'N/A'} "
+                        f"— recorded for review, no automatic state change."
+                    ),
+                    metadata_json={
+                        "event_id": event_id, "event_type": event_type, "kind": kind,
+                        "payment_id": payment_rzp_id,
+                    },
+                )
+            db.add(audit)
+
         elif event_type == "payment.failed" or status == "failed":
             # Check if a recovery case already exists for this payment
             existing_case = db.query(RecoveryCase).filter_by(payment_id=payment.id).first() if payment else None
@@ -254,6 +338,7 @@ def process_inbound_event(
                     priority=priority,
                     attempt_count=0,
                     max_attempts=3,
+                    simulated=bool(normalized.get("recon_simulated", False)),
                 )
                 db.add(recovery_case)
                 db.flush()
@@ -278,6 +363,15 @@ def process_inbound_event(
                 logger.info(f"Created Recovery Case {case_number} for payment {payment_rzp_id}")
             else:
                 recovery_case = existing_case
+
+            # Phase 9 — payment lifecycle tracking, AFTER case resolution
+            # above so the audit entry can be correlated to the right case
+            # (separate concern: this never touches RecoveryCase itself).
+            if payment:
+                reconcile_payment_lifecycle(
+                    db, payment, normalized, merchant_id=merchant_id, event_id=event_id,
+                    recovery_case_id=recovery_case.id if recovery_case else None,
+                )
 
         elif event_type in ("payment.captured", "order.paid") or status == "captured":
             # If payment succeeded, check if there was an open recovery case for it and resolve it
@@ -307,6 +401,14 @@ def process_inbound_event(
                     )
                     db.add(audit)
                     logger.info(f"Resolved Recovery Case {open_case.case_number} on payment capture.")
+
+                # Phase 9 — payment lifecycle tracking, AFTER case resolution
+                # above so the audit entry can be correlated to the right
+                # case (separate concern: this never touches RecoveryCase).
+                reconcile_payment_lifecycle(
+                    db, payment, normalized, merchant_id=merchant_id, event_id=event_id,
+                    recovery_case_id=open_case.id if open_case else None,
+                )
 
         # 7. Mark event as processed
         revenue_event.processing_status = "processed"

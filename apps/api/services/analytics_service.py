@@ -18,11 +18,20 @@ from uuid import UUID
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
+from models.audit_log import AuditLog
 from models.case_intelligence import CaseIntelligence
 from models.communication import Communication
+from models.payment import Payment
 from models.recovery_action import RecoveryAction
 from models.recovery_case import RecoveryCase
 from schemas.analytics import AnalyticsMetrics, ChannelPerformance, CommunicationAnalytics, StrategyPerformance
+
+# Both mismatch audit action names feed reconciliation_mismatches_total —
+# the case-level "already RESOLVED" check (event_processor.py §6b) and the
+# general payment-lifecycle checker (services/reconciliation.py) are two
+# detectors writing into the same honest count, never two separate metrics
+# for what a user experiences as one thing: "a mismatch was found".
+_MISMATCH_AUDIT_ACTIONS = ("RECONCILIATION_MISMATCH", "PAYMENT_STATE_RECONCILIATION_MISMATCH")
 
 _ACTIVE_CASE_STATUSES = ("DETECTED", "OPEN")
 
@@ -66,8 +75,28 @@ def compute_analytics(db: Session, merchant_id: UUID) -> AnalyticsMetrics:
     recovered = [a for a in actions if (a.outcome or "") == "RECOVERED"]
     real_recovered = [a for a in recovered if not a.simulated]
     sim_recovered = [a for a in recovered if a.simulated]
-    revenue_recovered = sum((Decimal(a.recovered_amount or 0) for a in real_recovered), Decimal("0.00"))
     simulated_revenue_recovered = sum((Decimal(a.recovered_amount or 0) for a in sim_recovered), Decimal("0.00"))
+
+    # --- Phase 9: net revenue_recovered of any later refund ---------------
+    # "REAL RECOVERED REVENUE" means revenue actually confirmed AND still
+    # held — a fully refunded payment-link recovery is not permanently
+    # recovered revenue, even though RecoveryAction.outcome correctly stays
+    # RECOVERED (recovery lifecycle is never rewritten by a later refund;
+    # see services/reconciliation.py).
+    fulfilling_ids = {a.fulfilling_payment_id for a in real_recovered if a.fulfilling_payment_id}
+    refunded_paise_by_payment: dict = {}
+    if fulfilling_ids:
+        for p in db.query(Payment).filter(Payment.id.in_(fulfilling_ids)).all():
+            refunded_paise_by_payment[p.id] = int(p.refunded_amount_paise or 0)
+
+    revenue_recovered = Decimal("0.00")
+    revenue_refunded = Decimal("0.00")
+    for a in real_recovered:
+        amt = Decimal(a.recovered_amount or 0)
+        refunded = Decimal(refunded_paise_by_payment.get(a.fulfilling_payment_id, 0)) / Decimal("100")
+        refunded = min(refunded, amt)  # never subtract more than was ever recovered on this action
+        revenue_recovered += (amt - refunded)
+        revenue_refunded += refunded
 
     executed = [a for a in actions if a.status == "EXECUTED"]
     recovery_rate = (len(real_recovered) / len(executed)) if executed else 0.0
@@ -179,11 +208,19 @@ def compute_analytics(db: Session, merchant_id: UUID) -> AnalyticsMetrics:
         recovery_value_from_communicated_cases=recovery_value_from_communicated_cases,
     )
 
+    reconciliation_mismatches_total = (
+        db.query(AuditLog)
+        .filter(AuditLog.merchant_id == merchant_id, AuditLog.action.in_(_MISMATCH_AUDIT_ACTIONS))
+        .count()
+    )
+
     return AnalyticsMetrics(
         generated_at=datetime.now(timezone.utc),
         revenue_at_risk=revenue_at_risk,
         potential_recoverable_revenue=potential_recoverable_revenue,
         revenue_recovered=revenue_recovered,
+        revenue_refunded=revenue_refunded,
+        reconciliation_mismatches_total=reconciliation_mismatches_total,
         simulated_revenue_recovered=simulated_revenue_recovered,
         recovery_rate=round(recovery_rate, 4),
         average_recovery_probability=average_recovery_probability,

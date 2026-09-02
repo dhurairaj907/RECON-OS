@@ -82,6 +82,7 @@ class ActionProposal(BaseModel):
     test_mode: bool = True
     razorpay_configured: bool = False
     simulator_enabled: bool = False            # is the (non-real) simulator switched on?
+    automatic_execution_enabled: bool = False  # see ActionResponse.automatic_execution_enabled
 
 
 # ---------------------------------------------------------------------------
@@ -109,6 +110,11 @@ class ActionResponse(BaseModel):
     recovered_amount: Decimal = Decimal("0.00")
     simulated: bool = False                     # outcome set by the simulator, not a real payment
     simulator_enabled: bool = False
+    # True only when RECON is CONFIGURED to auto-execute Policy-APPROVED
+    # actions (see AUTOMATIC_ACTION_EXECUTION_ENABLED) — lets the frontend
+    # honestly say "automatically executed" instead of implying a person
+    # manually triggered it, without inventing a new DB field.
+    automatic_execution_enabled: bool = False
 
     strategy_action: Optional[str] = None
     policy_verdict: Optional[str] = None

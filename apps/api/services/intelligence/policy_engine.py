@@ -16,10 +16,14 @@ hardcoded across the codebase.
 import logging
 from decimal import Decimal
 
+from typing import Optional
+
 from config import settings
 from schemas.intelligence import (
     CaseContext,
     DiagnosisResult,
+    IntentClassification,
+    IntentResult,
     PolicyResult,
     PolicyRuleResult,
     PolicyVerdict,
@@ -47,6 +51,7 @@ def evaluate_policy(
     diagnosis: DiagnosisResult,
     prediction: PredictionResult,  # noqa: ARG001 - reserved for future rules
     strategy: StrategyResult,
+    intent: Optional[IntentResult] = None,
 ) -> PolicyResult:
     max_attempts = int(settings.POLICY_MAX_RECOVERY_ATTEMPTS)
     contact_window = int(settings.POLICY_CONTACT_WINDOW_HOURS)
@@ -161,6 +166,48 @@ def evaluate_policy(
     if not r7_pass:
         reject = True
 
+    # RULE 8 — Intent-aware recovery: a customer RECON has evidence is likely
+    # unwilling must never be auto-recovered. Mirrors RULE_FRAUD_NO_AUTO_RETRY
+    # exactly: hard, never human-overridable via approval — Phase 10's
+    # "Never allow LIKELY_UNWILLING -> automatic payment link" is enforced
+    # HERE, the single authoritative decision point, not in the intent module
+    # itself (which never executes or approves anything). `intent is None`
+    # (not evaluated, or evidence unavailable) leaves existing behavior
+    # completely unchanged — this rule passes trivially.
+    intent_unwilling = intent is not None and intent.classification == IntentClassification.LIKELY_UNWILLING
+    r8_pass = not intent_unwilling
+    rule(
+        "RULE_INTENT_UNWILLING", "Intent-aware recovery block",
+        "A customer RECON has evidence is likely unwilling to be recovered "
+        "must never be automatically retried or contacted.",
+        r8_pass,
+        "no unwillingness evidence" if r8_pass
+        else f"intent=LIKELY_UNWILLING (confidence {intent.confidence:.0%}) — "
+             f"{', '.join(intent.reason_codes) or 'see intent evaluation'}",
+    )
+    if not r8_pass:
+        reject = True
+
+    # RULE 9 — Intent-aware recovery: ambiguous or insufficient evidence about
+    # customer willingness routes to the SAME conservative fallback
+    # NEEDS_APPROVAL already provides for every other uncertain case — no new
+    # execution path, no new bypass.
+    intent_uncertain = intent is not None and intent.classification in (
+        IntentClassification.AMBIGUOUS, IntentClassification.INSUFFICIENT_EVIDENCE,
+    )
+    r9_pass = not intent_uncertain
+    rule(
+        "RULE_INTENT_EVIDENCE", "Intent evidence sufficiency",
+        "AMBIGUOUS or INSUFFICIENT_EVIDENCE intent requires a human decision "
+        "before automated recovery proceeds.",
+        r9_pass,
+        "intent evidence sufficient (or not evaluated)" if r9_pass
+        else f"intent={intent.classification.value} (confidence {intent.confidence:.0%}, "
+             f"evidence_completeness {intent.evidence_completeness:.0%}) — human review required",
+    )
+    if not r9_pass:
+        needs_approval = True
+
     # --- Verdict aggregation -------------------------------------------------
     if reject:
         verdict = PolicyVerdict.REJECTED
@@ -186,7 +233,8 @@ def evaluate_policy(
     else:
         allowed_actions = []
 
-    reason = _reason(verdict, violated, rules, action, amount, ctx.currency, auto_limit, is_risk)
+    reason = _reason(verdict, violated, rules, action, amount, ctx.currency, auto_limit, is_risk,
+                      intent_unwilling, intent_uncertain, intent)
 
     return PolicyResult(
         verdict=verdict,
@@ -200,8 +248,13 @@ def evaluate_policy(
     )
 
 
-def _reason(verdict, violated, rules, action, amount, currency, auto_limit, is_risk) -> str:
+def _reason(verdict, violated, rules, action, amount, currency, auto_limit, is_risk,
+            intent_unwilling=False, intent_uncertain=False, intent=None) -> str:
     if verdict == PolicyVerdict.REJECTED:
+        if intent_unwilling:
+            return ("Rejected: intent evaluation classified this customer as LIKELY_UNWILLING "
+                    f"(confidence {intent.confidence:.0%}) — automated recovery is not permitted; "
+                    "route to manual review if a human still wants to pursue it.")
         if is_risk:
             return ("Rejected: risk/fraud-blocked payment. Automated recovery is not "
                     "permitted — route to manual fraud investigation.")
@@ -210,6 +263,11 @@ def _reason(verdict, violated, rules, action, amount, currency, auto_limit, is_r
     if verdict == PolicyVerdict.NEEDS_APPROVAL:
         if action == StrategyAction.MANUAL_REVIEW:
             return "Needs approval: recommended action is manual review by design."
+        if intent_uncertain:
+            return (f"Needs approval: intent evaluation classified this customer as "
+                    f"{intent.classification.value} (confidence {intent.confidence:.0%}, "
+                    f"evidence completeness {intent.evidence_completeness:.0%}) — a human "
+                    "should confirm before automated recovery proceeds.")
         if amount > auto_limit:
             return (f"Needs approval: amount {currency} {amount} exceeds the automatic "
                     f"approval ceiling of {currency} {auto_limit}.")

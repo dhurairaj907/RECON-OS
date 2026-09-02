@@ -25,6 +25,8 @@ from schemas.intelligence import (
     IntelligenceEnvelope,
     IntelligenceListItem,
     IntelligenceListResponse,
+    IntentEnvelope,
+    IntentResult,
 )
 from services.intelligence.orchestrator import run_intelligence
 
@@ -92,6 +94,7 @@ def _envelope(case: RecoveryCase, ci: CaseIntelligence | None) -> IntelligenceEn
         diagnosis=ci.diagnosis_json,
         prediction=ci.prediction_json,
         strategy=ci.strategy_json,
+        intent=ci.intent_json,
         policy=ci.policy_json,
         context=ci.context_json,
         error_message=ci.error_message,
@@ -131,6 +134,27 @@ def analyze_case_intelligence(
     # run_intelligence owns its transaction; re-resolve the row for a clean read
     fresh = _latest_intel(db, case.id) or ci
     return _envelope(case, fresh)
+
+
+@router.get(
+    "/recovery-cases/{case_id}/intent",
+    response_model=IntentEnvelope,
+)
+def get_case_intent(case_id: str, ctx: AuthContext = Depends(get_auth_context), db: Session = Depends(get_db)):
+    """
+    Return the latest intent-aware recovery evidence for a recovery case
+    (Phase 10). Read-only — nothing here executes or approves anything; see
+    services/intelligence/intent.py and policy_engine.py's RULE_INTENT_*.
+    """
+    merchant = get_org_merchant(db, ctx.organization)
+    case = _resolve_case(db, merchant.id, case_id)
+    ci = _latest_intel(db, case.id)
+    if ci is None or ci.intent_json is None:
+        return IntentEnvelope(case_id=str(case.id), case_number=case.case_number, evaluated=False)
+    return IntentEnvelope(
+        case_id=str(case.id), case_number=case.case_number, evaluated=True,
+        intent=IntentResult.model_validate(ci.intent_json),
+    )
 
 
 @router.get("/intelligence", response_model=IntelligenceListResponse)

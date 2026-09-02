@@ -39,5 +39,6 @@ def predict_one(features: dict) -> dict | None:
         "model_name": MODEL_NAME,
         "model_version": metadata.version,
         "status": metadata.status,   # expected "EXPERIMENTAL" — surface this to callers
+        "real_world_validation": metadata.real_world_validation,
         "expected_recovery_hours": round(max(hours, 0.0), 2),
     }

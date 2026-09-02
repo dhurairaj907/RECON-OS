@@ -32,6 +32,7 @@ from services.actions.common import ui_state
 from services.actions.executor import execute_action
 from services.actions.proposal import get_or_create_action
 from services.actions.unknown import verify_unknown_action
+from services.communications.service import send_communication
 from services.event_processor import process_inbound_event
 
 
@@ -547,6 +548,29 @@ def scenario_25(r: _Recorder):
         r.check("revenue_recovered", Decimal(case.amount_recovered) == Decimal("4999.00"))
 
 
+# ===========================================================================
+# 26. Recovery communication — real send path, approved template, honest
+#     SENT status (a demo must never claim DELIVERED without a provider
+#     webhook confirmation — see services/communications/service.py)
+# ===========================================================================
+def scenario_26(r: _Recorder):
+    with isolated_db() as (db, merchant), fake_razorpay():
+        case = create_case(db, merchant, payment_failed_payload())
+        analyze(db, case)
+        action = propose(db, case)
+        executed = execute_action(db, action.id)
+        r.check("executed", executed.status == "EXECUTED", executed.status)
+
+        comm = send_communication(
+            db, merchant_id=merchant.id, case=case, channel="EMAIL",
+            message_type="PAYMENT_LINK_CREATED", decided_by="evaluation",
+        )
+        r.check("communication_sent", comm.status == "SENT", comm.status)
+        r.check("uses_approved_template", bool(comm.subject) and bool(comm.body))
+        r.check("never_fabricates_delivered", comm.status != "DELIVERED", comm.status)
+        r.check("provider_recorded", comm.provider == "FAKE_EMAIL", comm.provider)
+
+
 SCENARIOS = [
     (1, "Normal payment failure", ["diagnosis"], scenario_01),
     (2, "Automatically recoverable payment", ["recovery_outcome", "action_safety"], scenario_02),
@@ -573,6 +597,7 @@ SCENARIOS = [
     (23, "Policy change after initial recommendation", ["policy_safety"], scenario_23),
     (24, "Customer contact limit", ["policy_safety"], scenario_24),
     (25, "Successful recovery", ["recovery_outcome", "verification"], scenario_25),
+    (26, "Recovery communication", ["communication"], scenario_26),
 ]
 
 

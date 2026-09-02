@@ -72,12 +72,18 @@ def _run_lightweight_migrations():
             "provider_version": "VARCHAR(60)",
             "intelligence_version": "VARCHAR(20)",
             "ml_predictions_json": "TEXT",
+            # Phase 10 — see models/case_intelligence.py::intent_json/intent_classification
+            "intent_json": "TEXT",
+            "intent_classification": "VARCHAR(30)",
+            "intent_confidence": "NUMERIC(5,4)",
         },
         "recovery_actions": {
             "simulated": "BOOLEAN NOT NULL DEFAULT 0",
             "human_decision": "VARCHAR(20)",
             "human_decided_at": "TIMESTAMP",
             "human_decided_by": "VARCHAR(60)",
+            # Phase 9 — see models/recovery_action.py::fulfilling_payment_id
+            "fulfilling_payment_id": "VARCHAR(36)",
         },
         "merchants": {
             "organization_id": "VARCHAR(36)",
@@ -88,6 +94,21 @@ def _run_lightweight_migrations():
         "communications": {
             "idempotency_key": "VARCHAR(200)",
             "last_webhook_event_id": "VARCHAR(120)",
+        },
+        "recovery_cases": {
+            "simulated": "BOOLEAN NOT NULL DEFAULT 0",
+        },
+        # Phase 9 — payment lifecycle / reconciliation (additive only; see
+        # models/payment.py and services/reconciliation.py).
+        "payments": {
+            "lifecycle_status": "VARCHAR(20)",
+            "reconciliation_status": "VARCHAR(20) DEFAULT 'UNVERIFIED'",
+            "refunded_amount_paise": "BIGINT NOT NULL DEFAULT 0",
+            "dispute_status": "VARCHAR(20)",
+        },
+        "revenue_events": {
+            "correlation_id": "VARCHAR(255)",
+            "signature_verified": "BOOLEAN",
         },
     }
 
@@ -173,3 +194,51 @@ def get_org_merchant(db: Session, organization):
     db.refresh(merchant)
     logger.info(f"Created merchant for organization {organization.name}: {merchant.id}")
     return merchant
+
+
+def resolve_connected_merchant(db: Session):
+    """
+    Phase 8 — the organization-scoped merchant resolver for INBOUND provider
+    webhooks (replaces `seed_default_merchant`, which just returned
+    `db.query(Merchant).first()` with no ordering — "whichever merchant the
+    database happens to return first". That only looked safe because
+    exactly one merchant existed; since `POST /auth/register` already lets
+    anyone create a second organization, it was a latent, non-deterministic
+    cross-tenant misattribution bug.
+
+    RECON OS has a single, platform-wide Razorpay credential today (see
+    config.py) — there is no per-organization credential store, so an
+    inbound webhook cannot be routed to "the organization that actually
+    owns this Razorpay account" the way a true multi-tenant platform would.
+    What this function guarantees instead is *deterministic, org-model-
+    consistent* routing:
+      - exactly one Organization exists (the common case) -> its Merchant,
+        via `get_org_merchant` — the same resolver every other org-scoped
+        router already uses;
+      - no Organization exists yet -> bootstrap the platform default one;
+      - more than one Organization exists -> prefer the platform's named
+        default organization if present, else the oldest by creation time
+        (deterministic, unlike the old unordered first-row lookup).
+    True multi-tenant webhook routing needs per-organization credentials —
+    out of scope until that exists; this is documented on the Connections
+    page and in the phase report as a known limitation, not hidden.
+    """
+    from models.organization import Organization
+
+    ensure_default_organization(db)  # backfills any pre-Phase-5 orphan merchants; harmless no-op otherwise
+
+    organizations = db.query(Organization).order_by(Organization.created_at).all()
+
+    if not organizations:
+        default_org = Organization(name=settings.DEFAULT_ORGANIZATION_NAME)
+        db.add(default_org)
+        db.commit()
+        db.refresh(default_org)
+        logger.info(f"Created default organization: {default_org.name} ({default_org.id})")
+        return get_org_merchant(db, default_org)
+
+    if len(organizations) == 1:
+        return get_org_merchant(db, organizations[0])
+
+    default_org = next((o for o in organizations if o.name == settings.DEFAULT_ORGANIZATION_NAME), None)
+    return get_org_merchant(db, default_org or organizations[0])

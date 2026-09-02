@@ -12,8 +12,10 @@ Phase 3 adds (additive) extraction of the `payment_link` entity so
 from decimal import Decimal
 from typing import Any, Dict, Optional
 
+from integrations.events import NormalizedPaymentEvent
 
-def normalize_razorpay_event(raw_payload: Dict[str, Any], event_id_override: Optional[str] = None) -> Dict[str, Any]:
+
+def normalize_razorpay_event(raw_payload: Dict[str, Any], event_id_override: Optional[str] = None) -> NormalizedPaymentEvent:
     """
     Normalizes a Razorpay webhook JSON payload into a standard RECON OS event structure.
     """
@@ -31,6 +33,14 @@ def normalize_razorpay_event(raw_payload: Dict[str, Any], event_id_override: Opt
     payment_link_entity: Dict[str, Any] = {}
     if "payment_link" in payload_wrapper and isinstance(payload_wrapper["payment_link"], dict):
         payment_link_entity = payload_wrapper["payment_link"].get("entity", {}) or {}
+
+    # Extract refund entity if present (Phase 9) — Razorpay's refund.* webhooks
+    # nest BOTH the original `payment` entity (unaffected amount, still used
+    # for correlation above) and a separate `refund` entity carrying the
+    # actual refunded amount for this specific refund.
+    refund_entity: Dict[str, Any] = {}
+    if "refund" in payload_wrapper and isinstance(payload_wrapper["refund"], dict):
+        refund_entity = payload_wrapper["refund"].get("entity", {}) or {}
 
     # Extract event ID
     event_id = (
@@ -75,6 +85,10 @@ def normalize_razorpay_event(raw_payload: Dict[str, Any], event_id_override: Opt
         "payment_link_status": payment_link_entity.get("status"),
         "payment_link_amount": payment_link_entity.get("amount"),
         "payment_link_amount_paid": payment_link_entity.get("amount_paid"),
+        # --- Phase 9: refund fields (None for non-refund events) ---
+        "refund_id": refund_entity.get("id"),
+        "refund_amount_paise": refund_entity.get("amount"),
+        "refund_status": refund_entity.get("status"),
         # True only for events produced by the explicitly-enabled RECON simulator.
         # A real Razorpay webhook can never set this.
         "recon_simulated": bool(raw_payload.get("recon_simulated", False)),

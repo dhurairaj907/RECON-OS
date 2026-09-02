@@ -57,6 +57,118 @@ def test_login_success(unauthenticated_client, db_session):
     assert res.status_code == 403
 
 
+def test_session_cookie_secure_flag_follows_setting(unauthenticated_client, monkeypatch):
+    """Deployment-hardening: the session cookie's Secure attribute must
+    reflect SESSION_COOKIE_SECURE — off for local HTTP dev (the default),
+    on when a deployment explicitly enables it for HTTPS. Never hardcoded
+    either way (see auth.py::set_session_cookie)."""
+    monkeypatch.setattr(settings, "SESSION_COOKIE_SECURE", False)
+    res_dev = unauthenticated_client.post("/api/v1/auth/register", json={
+        "email": "secure-flag-dev@recon.test", "password": "SuperSecret123!",
+        "organization_name": "Secure Flag Dev Org",
+    })
+    assert res_dev.status_code == 201, res_dev.text
+    cookie_header_dev = res_dev.headers.get("set-cookie", "")
+    assert settings.SESSION_COOKIE_NAME in cookie_header_dev
+    assert "secure" not in cookie_header_dev.lower()
+    assert "httponly" in cookie_header_dev.lower()
+
+    unauthenticated_client.cookies.clear()
+    monkeypatch.setattr(settings, "SESSION_COOKIE_SECURE", True)
+    res_prod = unauthenticated_client.post("/api/v1/auth/register", json={
+        "email": "secure-flag-prod@recon.test", "password": "SuperSecret123!",
+        "organization_name": "Secure Flag Prod Org",
+    })
+    assert res_prod.status_code == 201, res_prod.text
+    cookie_header_prod = res_prod.headers.get("set-cookie", "")
+    assert "secure" in cookie_header_prod.lower()
+    assert "httponly" in cookie_header_prod.lower()
+
+
+def test_local_dev_cookie_defaults_to_samesite_lax(unauthenticated_client, monkeypatch):
+    """Cross-domain hardening: the DEFAULT SameSite policy must remain
+    'lax' (unchanged local-dev behavior) unless a deployment explicitly
+    opts into 'none' for a cross-site frontend/backend split."""
+    monkeypatch.setattr(settings, "SESSION_COOKIE_SECURE", False)
+    monkeypatch.setattr(settings, "SESSION_COOKIE_SAMESITE", "lax")
+    res = unauthenticated_client.post("/api/v1/auth/register", json={
+        "email": "samesite-lax-default@recon.test", "password": "SuperSecret123!",
+        "organization_name": "SameSite Lax Default Org",
+    })
+    assert res.status_code == 201, res.text
+    cookie_header = res.headers.get("set-cookie", "").lower()
+    assert "samesite=lax" in cookie_header
+    assert "secure" not in cookie_header, "local HTTP dev must never get a Secure cookie"
+
+
+def test_cross_domain_production_cookie_is_samesite_none_and_secure(unauthenticated_client, monkeypatch):
+    """Cross-domain hardening: a deployment where the frontend (e.g.
+    Cloudflare Pages) and backend (e.g. Render) are on different domains
+    MUST set SESSION_COOKIE_SAMESITE=none for the browser to send the
+    cookie on cross-site API calls at all — and it must come back paired
+    with Secure, or the browser drops the cookie outright."""
+    monkeypatch.setattr(settings, "SESSION_COOKIE_SECURE", True)
+    monkeypatch.setattr(settings, "SESSION_COOKIE_SAMESITE", "none")
+    res = unauthenticated_client.post("/api/v1/auth/register", json={
+        "email": "samesite-none-prod@recon.test", "password": "SuperSecret123!",
+        "organization_name": "SameSite None Prod Org",
+    })
+    assert res.status_code == 201, res.text
+    cookie_header = res.headers.get("set-cookie", "").lower()
+    assert "samesite=none" in cookie_header
+    assert "secure" in cookie_header
+    assert "httponly" in cookie_header
+
+
+def test_samesite_none_forces_secure_even_if_secure_setting_left_false(unauthenticated_client, monkeypatch):
+    """Safety guard: SameSite=None without Secure is a cookie the browser
+    silently drops entirely — auth.py must never produce that combination,
+    even if an operator misconfigures SESSION_COOKIE_SECURE=false while
+    setting SESSION_COOKIE_SAMESITE=none. This can only make the cookie
+    MORE restrictive than requested, never less."""
+    monkeypatch.setattr(settings, "SESSION_COOKIE_SECURE", False)
+    monkeypatch.setattr(settings, "SESSION_COOKIE_SAMESITE", "none")
+    res = unauthenticated_client.post("/api/v1/auth/register", json={
+        "email": "samesite-none-misconfigured@recon.test", "password": "SuperSecret123!",
+        "organization_name": "SameSite None Misconfigured Org",
+    })
+    assert res.status_code == 201, res.text
+    cookie_header = res.headers.get("set-cookie", "").lower()
+    assert "samesite=none" in cookie_header
+    assert "secure" in cookie_header, "SameSite=None must always be paired with Secure, regardless of SESSION_COOKIE_SECURE"
+
+
+def test_invalid_samesite_value_falls_back_to_lax(unauthenticated_client, monkeypatch, caplog):
+    """An unrecognized SESSION_COOKIE_SAMESITE value must fail safe to the
+    original 'lax' default, not raise or silently produce an invalid
+    cookie attribute."""
+    monkeypatch.setattr(settings, "SESSION_COOKIE_SAMESITE", "not-a-real-value")
+    res = unauthenticated_client.post("/api/v1/auth/register", json={
+        "email": "samesite-invalid@recon.test", "password": "SuperSecret123!",
+        "organization_name": "SameSite Invalid Org",
+    })
+    assert res.status_code == 201, res.text
+    cookie_header = res.headers.get("set-cookie", "").lower()
+    assert "samesite=lax" in cookie_header
+
+
+def test_clear_session_cookie_matches_set_cookie_attributes(unauthenticated_client, monkeypatch):
+    """logout's delete_cookie must use the SAME Secure/SameSite attributes
+    the session cookie was actually set with, so browsers reliably clear
+    a cross-site (SameSite=None; Secure) cookie on logout too."""
+    monkeypatch.setattr(settings, "SESSION_COOKIE_SECURE", True)
+    monkeypatch.setattr(settings, "SESSION_COOKIE_SAMESITE", "none")
+    unauthenticated_client.post("/api/v1/auth/register", json={
+        "email": "samesite-logout@recon.test", "password": "SuperSecret123!",
+        "organization_name": "SameSite Logout Org",
+    })
+    res = unauthenticated_client.post("/api/v1/auth/logout")
+    assert res.status_code == 200, res.text
+    cookie_header = res.headers.get("set-cookie", "").lower()
+    assert "samesite=none" in cookie_header
+    assert "secure" in cookie_header
+
+
 def test_login_invalid_credentials(unauthenticated_client):
     unauthenticated_client.post("/api/v1/auth/register", json={
         "email": "realuser@recon.test", "password": "RealPassword123!", "organization_name": "RealOrg",

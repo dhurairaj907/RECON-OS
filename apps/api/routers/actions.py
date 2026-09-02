@@ -108,6 +108,7 @@ def _to_response(db: Session, action: RecoveryAction) -> ActionResponse:
         recovered_amount=action.recovered_amount or 0,
         simulated=bool(action.simulated),
         simulator_enabled=bool(settings.RECON_SIMULATOR_ENABLED),
+        automatic_execution_enabled=bool(settings.AUTOMATIC_ACTION_EXECUTION_ENABLED),
         strategy_action=action.strategy_action,
         policy_verdict=action.policy_verdict,
         blocked_reason=action.blocked_reason,

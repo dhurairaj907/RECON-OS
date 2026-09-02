@@ -3,7 +3,7 @@ RECON OS — Revenue Event Model
 """
 
 import uuid
-from sqlalchemy import Column, String, Text, DateTime, Index, ForeignKey, JSON, Uuid
+from sqlalchemy import Boolean, Column, String, Text, DateTime, Index, ForeignKey, JSON, Uuid
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -29,6 +29,17 @@ class RevenueEvent(Base):
 
     raw_payload = Column(JSON_TYPE, nullable=False)
     normalized_data = Column(JSON_TYPE, nullable=True)
+
+    # --- Phase 9: correlation + provenance (additive) ----------------------
+    # The resolved payment/order/payment-link id this event is about — used
+    # to correlate across Payment/RecoveryCase/RecoveryAction/Communication
+    # by a stable provider identifier, never a display/customer name.
+    correlation_id = Column(String(255), nullable=True, index=True)
+    # True for a real signature-verified webhook; False for the explicit
+    # unsigned-dev-mode path; also True for the gated simulator (which is
+    # separately marked via normalized_data.recon_simulated — never silently
+    # indistinguishable from a real webhook).
+    signature_verified = Column(Boolean, nullable=True)
 
     received_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     processed_at = Column(DateTime(timezone=True), nullable=True)

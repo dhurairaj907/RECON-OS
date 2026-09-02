@@ -124,6 +124,23 @@ class CaseContext(BaseModel):
     # Contact governance (Phase 3 will populate; 0 for Phase 2)
     customer_contacts_last_24h: int = 0
 
+    # --- Phase 10: intent-aware recovery signals (additive, all defaulted) ---
+    # Payment links this customer was sent, across any of their cases, that
+    # they let expire or that were cancelled without paying — a real,
+    # already-stored signal (RecoveryAction.outcome), not a new tracking
+    # mechanism.
+    customer_expired_or_cancelled_links: int = 0
+    # Customer has explicitly opted out of at least one communication
+    # channel (Customer.opted_out_channels) — an unambiguous "do not
+    # contact" signal already captured elsewhere in the system.
+    customer_opted_out: bool = False
+    # Payment.refunded_amount_paise / dispute_status (Phase 9) aggregated
+    # across this customer's OTHER payments.
+    customer_refunded_payment_count: int = 0
+    customer_disputed_payment_count: int = 0
+    # Prior cases for this customer whose diagnosis was USER_ABANDONED.
+    customer_prior_user_abandoned_count: int = 0
+
     # Derived helper
     amount_band: str = "UNKNOWN"
 
@@ -155,6 +172,60 @@ class AIDiagnosisSchema(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     rationale: str = Field(min_length=1, max_length=800)
     evidence: List[str] = Field(default_factory=list, max_length=12)
+
+
+# ---------------------------------------------------------------------------
+# 2.5 Intent Evaluation  (Phase 10)
+# ---------------------------------------------------------------------------
+class IntentClassification(str, Enum):
+    RECOVERABLE = "RECOVERABLE"
+    AMBIGUOUS = "AMBIGUOUS"
+    LIKELY_UNWILLING = "LIKELY_UNWILLING"
+    INSUFFICIENT_EVIDENCE = "INSUFFICIENT_EVIDENCE"
+
+
+class IntentSignal(BaseModel):
+    code: str
+    description: str
+
+
+class IntentResult(BaseModel):
+    """
+    Distinct from DiagnosisResult (why did it fail?) and PredictionResult
+    (how likely is recovery to work?) — this answers "does RECON have reason
+    to believe the customer WANTS to be recovered?". Feeds the Policy Engine
+    as additional structured evidence; never bypasses it (see
+    policy_engine.py RULE_INTENT_UNWILLING / RULE_INTENT_EVIDENCE).
+    """
+    classification: IntentClassification
+    confidence: float = Field(ge=0.0, le=1.0)
+    reason_codes: List[str] = []
+    positive_signals: List[IntentSignal] = []
+    negative_signals: List[IntentSignal] = []
+    # Signals the directive asked for that the current data model cannot
+    # supply (no click tracking, no inbound customer replies, no mandate/
+    # subscription model) — reported honestly, never fabricated.
+    unavailable_signals: List[str] = []
+    evidence_completeness: float = Field(ge=0.0, le=1.0)
+    rationale: str
+    provider: str = "DETERMINISTIC"          # "DETERMINISTIC" | "GEMINI"
+    provider_version: Optional[str] = None
+    evaluated_at: datetime
+
+
+class AIIntentSchema(BaseModel):
+    """
+    The STRICT shape requested from and validated for an LLM intent opinion —
+    mirrors AIDiagnosisSchema exactly. An LLM can only return these fields;
+    it has no field through which to authorise an action, change a signal
+    value, or influence anything outside this classification.
+    """
+    model_config = ConfigDict(extra="ignore")
+
+    classification: IntentClassification
+    confidence: float = Field(ge=0.0, le=1.0)
+    reason_codes: List[str] = Field(default_factory=list, max_length=12)
+    rationale: str = Field(min_length=1, max_length=800)
 
 
 # ---------------------------------------------------------------------------
@@ -249,9 +320,18 @@ class IntelligenceEnvelope(BaseModel):
     diagnosis: Optional[Dict[str, Any]] = None
     prediction: Optional[Dict[str, Any]] = None
     strategy: Optional[Dict[str, Any]] = None
+    intent: Optional[Dict[str, Any]] = None
     policy: Optional[Dict[str, Any]] = None
     context: Optional[Dict[str, Any]] = None
     error_message: Optional[str] = None
+
+
+class IntentEnvelope(BaseModel):
+    """Response shape for GET /api/v1/recovery-cases/{case_id}/intent."""
+    case_id: str
+    case_number: str
+    evaluated: bool
+    intent: Optional[IntentResult] = None
 
 
 class IntelligenceSummary(BaseModel):

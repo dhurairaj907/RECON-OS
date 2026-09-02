@@ -34,6 +34,7 @@ CATEGORY_LABELS = {
     "idempotency": "Idempotency",
     "unknown_safety": "UNKNOWN safety",
     "approval_safety": "Approval safety",
+    "communication": "Communication safety",
 }
 
 

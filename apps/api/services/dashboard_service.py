@@ -190,10 +190,19 @@ def get_dashboard_metrics(db: Session, merchant_id: UUID) -> DashboardMetrics:
         recovered = [a for a in action_rows if (a.outcome or "") == "RECOVERED"]
         real_recovered = [a for a in recovered if not a.simulated]
         sim_recovered = [a for a in recovered if a.simulated]
-        # revenue_recovered = REAL recoveries only. Simulated ones are reported separately.
-        revenue_recovered = sum(
-            (Decimal(a.recovered_amount or 0) for a in real_recovered), Decimal("0.00")
-        )
+        # revenue_recovered = REAL recoveries only, net of any later refund on
+        # the fulfilling payment (Phase 9) — see
+        # services/analytics_service.py::compute_analytics for the same logic.
+        _fulfilling_ids = {a.fulfilling_payment_id for a in real_recovered if a.fulfilling_payment_id}
+        _refunded_paise_by_payment = {}
+        if _fulfilling_ids:
+            for p in db.query(Payment).filter(Payment.id.in_(_fulfilling_ids)).all():
+                _refunded_paise_by_payment[p.id] = int(p.refunded_amount_paise or 0)
+        revenue_recovered = Decimal("0.00")
+        for a in real_recovered:
+            _amt = Decimal(a.recovered_amount or 0)
+            _refunded = Decimal(_refunded_paise_by_payment.get(a.fulfilling_payment_id, 0)) / Decimal("100")
+            revenue_recovered += _amt - min(_refunded, _amt)
         simulated_revenue_recovered = sum(
             (Decimal(a.recovered_amount or 0) for a in sim_recovered), Decimal("0.00")
         )

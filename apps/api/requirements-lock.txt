@@ -1,0 +1,77 @@
+# ============================================================
+# RECON OS — Backend Reproducible Dependency Lock
+# ============================================================
+# Generated via `pip freeze` from the SAME environment that verified
+# 355/355 backend tests passing (Python 3.13.5) during the Phase 8-10
+# deployment-hardening pass. Every version here is a version that has
+# actually been exercised against this codebase — nothing was upgraded
+# or re-resolved to "latest" to produce this file.
+#
+# requirements.txt remains the human-edited source of intent (loose `>=`
+# ranges for most packages, exact pins for the ML stack — see its own
+# comments). This file is the DEPLOYMENT artifact: install from THIS file,
+# not requirements.txt, whenever byte-for-byte reproducibility matters
+# (staging, production, CI).
+#
+#   pip install -r requirements-lock.txt
+#
+# Regenerating this file: after intentionally changing requirements.txt,
+# reinstall into a clean venv from requirements.txt, run the FULL test
+# suite (`python -m pytest tests/ -q` from the repo root) and confirm
+# 355/355 (or the then-current baseline) still passes, THEN regenerate via
+# `pip freeze --local > requirements-lock.txt` from that verified venv.
+# Never hand-edit version numbers in this file.
+#
+# ML compatibility note (do not casually change numpy/scipy/scikit-learn/
+# pandas/joblib here): scikit-learn's pickle/joblib model persistence is
+# only reliably compatible WITHIN the same scikit-learn version, and
+# several of these packages (numpy 2.5.x, scipy 1.18.x) require Python
+# >=3.12 — this is exactly why apps/api/Dockerfile's base image was bumped
+# to match (see the Dockerfile's own comment). Changing any ML package
+# version here without re-running `python -m ai.training.train` and the
+# full test suite risks reproducing the exact "ModuleNotFoundError: No
+# module named '_loss'" incompatibility documented in requirements.txt.
+# ============================================================
+
+annotated-doc==0.0.5
+annotated-types==0.8.0
+anyio==4.14.2
+certifi==2026.7.22
+click==8.5.0
+cloudpickle==3.1.2
+colorama==0.4.6
+fastapi==0.141.1
+greenlet==3.5.5
+h11==0.16.0
+httpcore==1.0.9
+httptools==0.8.0
+httpx==0.28.1
+idna==3.19
+iniconfig==2.3.0
+joblib==1.6.0
+narwhals==2.25.0
+numpy==2.5.2
+packaging==26.3
+pandas==3.0.5
+pluggy==1.6.0
+psycopg2-binary==2.9.12
+pydantic==2.13.5
+pydantic-settings==2.15.0
+pydantic_core==2.46.5
+Pygments==2.21.0
+pytest==9.1.1
+python-dateutil==2.9.0.post0
+python-dotenv==1.2.3
+PyYAML==6.0.3
+scikit-learn==1.9.0
+scipy==1.18.1
+six==1.17.0
+SQLAlchemy==2.0.52
+starlette==1.6.0
+threadpoolctl==3.6.0
+typing-inspection==0.4.4
+typing_extensions==4.16.0
+tzdata==2026.3
+uvicorn==0.52.4
+watchfiles==1.2.0
+websockets==17.1

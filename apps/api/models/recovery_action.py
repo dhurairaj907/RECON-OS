@@ -87,6 +87,14 @@ class RecoveryAction(Base):
     # Verification — the webhook event that confirmed recovery (double-count guard)
     verifying_event_id = Column(String(255), nullable=True)
 
+    # Phase 9 — the Payment row created from the payment-link's own nested
+    # payment entity once it's paid (set in
+    # services/actions/verification.py::verify_payment_link_recovery). Pure
+    # correlation pointer so analytics can net out a later refund/dispute on
+    # THIS specific payment from recovered revenue — never read by the
+    # Action Engine or Policy Engine, never used to gate execution.
+    fulfilling_payment_id = Column(UUID_TYPE, ForeignKey("payments.id"), nullable=True, index=True)
+
     # Human approval (Phase 4) — distinct from `approved_at` (automatic policy
     # approval). Set ONLY by the approval endpoints; the executor re-validates
     # policy fresh every time and only HONOURS this if policy still says

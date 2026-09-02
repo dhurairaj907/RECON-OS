@@ -29,6 +29,10 @@ class ModelMetadataOut(BaseModel):
     label_classes: Optional[list] = None
     real_sample_count: int = 0
     notes: str = ""
+    dataset_version: str = "1.0"
+    # NONE | INSUFFICIENT | PARTIAL | FULL — orthogonal to `status`; see
+    # ai/models/base.py's REAL_VALIDATION_* constants.
+    real_world_validation: str = "NONE"
 
 
 class ModelStatusItem(BaseModel):

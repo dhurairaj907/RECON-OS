@@ -107,6 +107,45 @@ def test_cross_organization_communication_denied(unauthenticated_client):
     assert denied_send.status_code == 404
 
 
+def test_cross_organization_analytics_isolated(unauthenticated_client):
+    """Phase D/K: analytics are organization-scoped aggregates — Org B must
+    never see Org A's revenue/case counts folded into its own numbers."""
+    c = unauthenticated_client
+    _register(c, "orga-analytics@recon.test", "Org A Analytics")
+    sim = c.post("/api/v1/simulator/events", json=FULL_EVENT_PAYLOAD)
+    assert sim.status_code == 201, sim.text
+    analytics_a = c.get("/api/v1/analytics").json()
+    assert float(analytics_a["revenue_at_risk"]) > 0
+
+    c.cookies.clear()
+    _register(c, "orgb-analytics@recon.test", "Org B Analytics")
+
+    analytics_b = c.get("/api/v1/analytics").json()
+    assert float(analytics_b["revenue_at_risk"]) == 0
+    assert float(analytics_b["revenue_recovered"]) == 0
+
+
+def test_cross_organization_payments_and_customers_isolated(unauthenticated_client):
+    """Phase D: one organization's Payment/Customer rows must never appear
+    in another organization's list endpoints."""
+    c = unauthenticated_client
+    _register(c, "orga-pay@recon.test", "Org A Pay")
+    sim = c.post("/api/v1/simulator/events", json=FULL_EVENT_PAYLOAD)
+    assert sim.status_code == 201, sim.text
+    payments_a = c.get("/api/v1/payments").json()
+    assert payments_a["total"] >= 1
+    customers_a = c.get("/api/v1/customers").json()
+    assert customers_a["total"] >= 1
+
+    c.cookies.clear()
+    _register(c, "orgb-pay@recon.test", "Org B Pay")
+
+    payments_b = c.get("/api/v1/payments").json()
+    assert payments_b["total"] == 0
+    customers_b = c.get("/api/v1/customers").json()
+    assert customers_b["total"] == 0
+
+
 def test_organization_id_from_client_is_never_trusted(unauthenticated_client, db_session):
     """Even if a request body/header tried to smuggle an organization id, the
     server only ever uses the one derived from the session."""
