@@ -169,3 +169,50 @@ def test_webhook_resolves_to_correct_organization_when_a_second_one_exists(
     # own recovery-case list, NOT be silently attributed to the other org.
     cases = client.get("/api/v1/recovery-cases").json()
     assert cases["total"] == 1
+
+
+def test_webhook_prefers_organization_with_a_real_user_over_empty_platform_default(
+    client, sample_payment_failed_payload, make_signature, monkeypatch, webhook_secret, db_session
+):
+    """
+    Production incident regression: on a fresh deployment,
+    seed_default_merchant + ensure_default_organization unconditionally
+    create an EMPTY Organization named exactly settings.DEFAULT_ORGANIZATION_NAME
+    on the very first backend boot, before anyone has registered. Once a
+    real operator registers (a NEW, differently-named Organization), the
+    OLD tie-break ("prefer the org named DEFAULT_ORGANIZATION_NAME") always
+    won — attributing every real webhook to the empty auto-seeded org that
+    nobody can log into, while the operator's own dashboard correctly (from
+    an isolation standpoint) showed nothing. This must never happen again:
+    an Organization with zero registered users can never be the one
+    actually operating the deployment.
+    """
+    from database import get_org_merchant
+    from models.organization import Organization
+
+    empty_default_org = Organization(name=settings.DEFAULT_ORGANIZATION_NAME)
+    db_session.add(empty_default_org)
+    db_session.commit()
+    get_org_merchant(db_session, empty_default_org)  # creates its merchant row, still zero users
+
+    monkeypatch.setattr(settings, "RAZORPAY_WEBHOOK_SECRET", webhook_secret)
+    raw_body = json.dumps(sample_payment_failed_payload).encode("utf-8")
+    sig = make_signature(raw_body)
+
+    response = client.post(
+        "/api/v1/webhooks/razorpay", content=raw_body,
+        headers={"Content-Type": "application/json", "X-Razorpay-Signature": sig},
+    )
+    assert response.status_code == 200
+    assert response.json()["case_number"] is not None
+
+    # Must land on the authenticated (real, user-having) Test Organization —
+    # NOT the empty, name-matching platform-default org.
+    cases = client.get("/api/v1/recovery-cases").json()
+    assert cases["total"] == 1
+
+    empty_org_merchant = get_org_merchant(db_session, empty_default_org)
+    from models.recovery_case import RecoveryCase
+    assert db_session.query(RecoveryCase).filter(
+        RecoveryCase.merchant_id == empty_org_merchant.id
+    ).count() == 0, "the case must never be attributed to the empty, user-less platform-default organization"

@@ -216,9 +216,15 @@ def resolve_connected_merchant(db: Session):
         via `get_org_merchant` — the same resolver every other org-scoped
         router already uses;
       - no Organization exists yet -> bootstrap the platform default one;
-      - more than one Organization exists -> prefer the platform's named
-        default organization if present, else the oldest by creation time
-        (deterministic, unlike the old unordered first-row lookup).
+      - more than one Organization exists, and EXACTLY ONE has a real
+        registered user -> that one, regardless of name (a production
+        deployment's common real shape: the empty auto-seeded platform-
+        default org from first boot, plus the operator's own registered
+        org — see the inline comment below for the incident this fixes);
+      - more than one Organization exists and that's still ambiguous ->
+        prefer the platform's named default organization if present, else
+        the oldest by creation time (deterministic, unlike the old
+        unordered first-row lookup).
     True multi-tenant webhook routing needs per-organization credentials —
     out of scope until that exists; this is documented on the Connections
     page and in the phase report as a known limitation, not hidden.
@@ -239,6 +245,40 @@ def resolve_connected_merchant(db: Session):
 
     if len(organizations) == 1:
         return get_org_merchant(db, organizations[0])
+
+    # Production bug fix: `seed_default_merchant` + `ensure_default_organization`
+    # unconditionally create an empty, user-less "platform default" Organization
+    # on the very first backend boot — before anyone has ever registered. Once a
+    # real operator registers (POST /auth/register always creates a NEW,
+    # differently-named Organization — see routers/auth.py), the deployment
+    # ends up with >1 Organization: the auto-seeded empty one, and the real
+    # one with the operator's actual login. The name-match tie-break below
+    # would then ALWAYS prefer the empty auto-seeded org (it matches
+    # DEFAULT_ORGANIZATION_NAME) over the operator's real one — every
+    # webhook gets silently attributed to an organization nobody can log
+    # into, while the operator's own dashboard correctly (from an isolation
+    # standpoint) shows nothing. An Organization with zero registered users
+    # can never be the one actually operating this deployment, so when
+    # exactly one Organization among the candidates has a real user, prefer
+    # it — unambiguous, and strictly more informative than a name match.
+    # Falls through to the original name/oldest tie-break, UNCHANGED,
+    # whenever this doesn't resolve unambiguously (zero or multiple
+    # Organizations have real users) — never a regression for the
+    # genuinely-ambiguous multi-tenant case this function already documents
+    # as unsupported.
+    from models.user_organization import UserOrganization
+
+    org_ids = [o.id for o in organizations]
+    populated_org_ids = {
+        row[0] for row in
+        db.query(UserOrganization.organization_id)
+        .filter(UserOrganization.organization_id.in_(org_ids))
+        .distinct()
+        .all()
+    }
+    if len(populated_org_ids) == 1:
+        populated_org = next(o for o in organizations if o.id in populated_org_ids)
+        return get_org_merchant(db, populated_org)
 
     default_org = next((o for o in organizations if o.name == settings.DEFAULT_ORGANIZATION_NAME), None)
     return get_org_merchant(db, default_org or organizations[0])
