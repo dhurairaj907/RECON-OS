@@ -26,7 +26,7 @@ import dynamic from "next/dynamic";
 import { api } from "@/lib/api";
 import { IntelligenceEnvelope, IntentResult, RecoveryAction } from "@/lib/types";
 import { cn, formatDateTime, formatINR } from "@/lib/utils";
-import { deriveCasePipeline, type StageStatus } from "@/components/spatial/pipeline-model";
+import { deriveCasePipeline, ELIGIBLE_STRATEGIES, type StageStatus } from "@/components/spatial/pipeline-model";
 import { NumberedSteps, type NumberedStep } from "@/components/modules/NumberedSteps";
 import { CommunicationsSection } from "@/components/modules/CommunicationsSection";
 
@@ -415,8 +415,8 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 }
 
 /* ---------- Phase 3 (ACT) — Action section ---------------------------- */
-
-const ELIGIBLE_STRATEGIES = ["RETRY_NOW", "RETRY_DELAYED", "SEND_PAYMENT_LINK"];
+/* ELIGIBLE_STRATEGIES now lives in pipeline-model.ts — shared with
+ * deriveCasePipeline so both surfaces agree on what's actually actionable. */
 
 const actionStateStyle: Record<string, string> = {
   RECOVERED: "text-status-success border-status-success-border bg-status-success-bg",

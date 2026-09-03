@@ -23,6 +23,19 @@ export type StageStatus =
 
 export type Provenance = "verified" | "simulated";
 
+/**
+ * The ONLY strategies the backend can ever turn into a real, executable
+ * RecoveryAction — an exact mirror of
+ * apps/api/services/actions/common.py::PAYMENT_LINK_ELIGIBLE_STRATEGIES.
+ * A strategy outside this set (MANUAL_REVIEW, NO_ACTION, ...) can never
+ * produce a RecoveryAction, no matter what the policy verdict says — see
+ * services/actions/proposal.py::build_proposal's STRATEGY_NOT_ELIGIBLE
+ * path. Shared here (not duplicated) so every UI surface that needs to
+ * know "is this strategy actionable" — IntelligencePanel's ActionSection
+ * and this module's own deriveCasePipeline — agrees, by construction.
+ */
+export const ELIGIBLE_STRATEGIES = ["RETRY_NOW", "RETRY_DELAYED", "SEND_PAYMENT_LINK"];
+
 export interface PipelineStage {
   key: string;
   label: string;
@@ -130,6 +143,18 @@ export function deriveCasePipeline(
   // ACTION
   let action_: PipelineStage;
   if (!action) {
+    // A policy verdict of NEEDS_APPROVAL does NOT by itself mean a
+    // CREATE_PAYMENT_LINK action is pending approval — the Policy Engine
+    // forces NEEDS_APPROVAL for ANY MANUAL_REVIEW strategy too (see
+    // policy_engine.py), and MANUAL_REVIEW can never become a
+    // RecoveryAction (not in ELIGIBLE_STRATEGIES). Only claim an
+    // approvable payment-link action exists when the strategy is one
+    // that's actually eligible to become one — otherwise this is a human-
+    // review hold with no automated action at all, and must say so rather
+    // than fabricating "AWAITING APPROVAL" / "CREATE_PAYMENT_LINK" for
+    // something that was never proposed and never will be.
+    const strategyEligible = !!s && ELIGIBLE_STRATEGIES.includes(s.action);
+    const manualReviewHold = verdict === "NEEDS_APPROVAL" && !strategyEligible;
     action_ = {
       key: "action",
       label: "ACTION",
@@ -142,12 +167,14 @@ export function deriveCasePipeline(
       value:
         verdict === "REJECTED"
           ? "NO ACTION"
+          : manualReviewHold
+          ? "MANUAL REVIEW REQUIRED"
           : verdict === "NEEDS_APPROVAL"
           ? "AWAITING APPROVAL"
           : verdict === "APPROVED"
           ? "READY"
           : "—",
-      sub: "CREATE_PAYMENT_LINK",
+      sub: manualReviewHold ? "NO AUTOMATED ACTION" : "CREATE_PAYMENT_LINK",
     };
   } else {
     const st = (action.status || "").toUpperCase();
