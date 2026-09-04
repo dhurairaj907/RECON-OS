@@ -122,6 +122,41 @@ class Settings(BaseSettings):
     # identifiers, not arbitrary content.
     WHATSAPP_TEMPLATE_IDS: str = ""
 
+    # --- Brevo-specific real-provider configuration (SMS + WhatsApp REST API) ---
+    # Email continues through the existing generic SmtpEmailProvider above,
+    # pointed at Brevo's SMTP relay (smtp-relay.brevo.com) via SMTP_* — no
+    # second email implementation. SMS and WhatsApp use Brevo's REST API
+    # instead of the generic WEBHOOK_SMS/WEBHOOK_WHATSAPP providers above:
+    # Brevo's real endpoints require a distinct `api-key` header and payload
+    # shape (developers.brevo.com/docs/transactional-sms-endpoints,
+    # developers.brevo.com/docs/whatsapp-messages) that SMS_PROVIDER_WEBHOOK_URL/
+    # WHATSAPP_PROVIDER_WEBHOOK_URL's generic Bearer-token shape cannot express.
+    # Server-side only — never sent to the frontend, an API response, a log
+    # line, or a DB row.
+    BREVO_API_KEY: str = ""
+    # Brevo transactional SMS requires a registered sender/Header. In India
+    # this MUST be a TRAI DLT-registered 6-character alphabetic Header — an
+    # unregistered sender is silently dropped by the carrier network, not
+    # rejected by Brevo's own API, so RECON cannot detect that failure mode
+    # itself (see BrevoSmsProvider's docstring). No default: guessing one
+    # would be exactly the kind of invented, non-working configuration this
+    # project avoids.
+    BREVO_SMS_SENDER: str = ""
+    # Brevo's WhatsApp send API (developers.brevo.com/reference/send-whatsapp-message)
+    # requires the connected WhatsApp Business sender's own number as a
+    # separate field from the API key — discovered from Brevo's actual
+    # request schema during implementation, not part of the three variables
+    # originally scoped, but sending is not possible without it.
+    BREVO_WHATSAPP_SENDER: str = ""
+    # "MESSAGE_TYPE=brevo_template_id,MESSAGE_TYPE=brevo_template_id" — the
+    # SAME simple key=value convention as WHATSAPP_TEMPLATE_IDS above, but
+    # holding Brevo's own templateId (created in Brevo's dashboard under
+    # Campaigns > WhatsApp), never a generic provider template name.
+    # Deliberately a SEPARATE setting — the two are never interchangeable;
+    # only this one is consulted when RECON_COMMUNICATIONS_MODE=real (see
+    # resolved_whatsapp_template below).
+    BREVO_WHATSAPP_TEMPLATE_IDS: str = ""
+
     # --- Phase 7: controlled automatic recovery communication ---
     # RECON never contacts a customer automatically unless explicitly
     # enabled. Even when on, every send still goes through the same
@@ -170,8 +205,16 @@ class Settings(BaseSettings):
     def resolved_whatsapp_template(self, message_type: str) -> str:
         """Server-side only. Returns "" if no template is configured for this
         message type — callers must treat that as NOT_CONFIGURED, never fall
-        back to freeform text when WHATSAPP_REQUIRE_TEMPLATE is set."""
-        for pair in (self.WHATSAPP_TEMPLATE_IDS or "").split(","):
+        back to freeform text when WHATSAPP_REQUIRE_TEMPLATE is set.
+
+        Mode-aware: when RECON_COMMUNICATIONS_MODE=real, resolves against the
+        Brevo-specific BREVO_WHATSAPP_TEMPLATE_IDS mapping instead of the
+        generic WHATSAPP_TEMPLATE_IDS — BrevoWhatsAppProvider requires a real,
+        Brevo-issued templateId, never an arbitrary provider template name.
+        In fake mode (and any other non-real mode) this is byte-identical to
+        the original behaviour — only the source list changes."""
+        source = self.BREVO_WHATSAPP_TEMPLATE_IDS if self.RECON_COMMUNICATIONS_MODE == "real" else self.WHATSAPP_TEMPLATE_IDS
+        for pair in (source or "").split(","):
             if "=" not in pair:
                 continue
             key, _, value = pair.partition("=")

@@ -27,7 +27,7 @@ import uuid
 from dataclasses import dataclass
 from email.mime.text import MIMEText
 from email.utils import make_msgid
-from typing import Optional
+from typing import Any, Dict, Optional
 
 import httpx
 
@@ -242,8 +242,174 @@ class WebhookWhatsAppProvider(CommunicationProvider):
                               provider_message_id=_extract_provider_message_id(resp_payload))
 
 
+def _normalize_phone_for_brevo(phone: Optional[str]) -> Optional[str]:
+    """
+    Converts RECON's stored E.164-style phone (e.g. +919876543210) into
+    Brevo's required countrycode+digits form (919876543210) — Brevo's
+    SMS/WhatsApp APIs expect digits only, no leading '+' and no separators
+    (developers.brevo.com/docs/whatsapp-messages). Read-only: this NEVER
+    writes back to Customer.phone — the stored value is never mutated for
+    provider formatting, only a local copy is used for the outbound request.
+    Returns None (never a guess) if nothing digit-like remains, e.g. for a
+    malformed/empty input.
+    """
+    if not phone:
+        return None
+    digits = "".join(ch for ch in phone if ch.isdigit())
+    return digits or None
+
+
+# ---------------------------------------------------------------------------
+# Brevo — real providers for SMS + WhatsApp (REST API, not the generic
+# webhook shape above). Email intentionally has NO Brevo-specific class:
+# SmtpEmailProvider already works unmodified against Brevo's SMTP relay.
+# ---------------------------------------------------------------------------
+class BrevoSmsProvider(CommunicationProvider):
+    """
+    Real Brevo transactional SMS — POST https://api.brevo.com/v3/transactionalSMS/send,
+    authenticated via the `api-key` header (NOT the generic
+    `Authorization: Bearer` shape WebhookSMSProvider uses) — see
+    developers.brevo.com/docs/transactional-sms-endpoints. Returns a
+    structured NOT_CONFIGURED result (never raises, never falls back to
+    WebhookSMSProvider or a fake provider) when BREVO_API_KEY or
+    BREVO_SMS_SENDER is unset.
+
+    India-specific safety note: BREVO_SMS_SENDER must be a TRAI DLT-
+    registered Header for delivery to Indian numbers to actually succeed —
+    an unregistered sender is silently dropped by the carrier network, never
+    surfaced as an API error Brevo (or therefore RECON) can detect. This
+    provider only guards against a completely UNCONFIGURED sender; it cannot
+    verify DLT registration itself, and callers must never read a successful
+    submission here as a guarantee of delivery to an Indian handset.
+    """
+    name = "BREVO_SMS"
+    _API_URL = "https://api.brevo.com/v3/transactionalSMS/send"
+
+    def send(self, *, to: str, subject: str, body: str,
+              template_id: Optional[str] = None, template_vars: Optional[dict] = None) -> ProviderResult:
+        if not settings.BREVO_API_KEY:
+            return ProviderResult(ok=False, provider=self.name, error_code="NOT_CONFIGURED",
+                                  error_message="BREVO_API_KEY is not set.")
+        if not settings.BREVO_SMS_SENDER:
+            return ProviderResult(ok=False, provider=self.name, error_code="NOT_CONFIGURED",
+                                  error_message="BREVO_SMS_SENDER is not set — a DLT-registered "
+                                                "sender/header is required before Brevo SMS can send.")
+        recipient = _normalize_phone_for_brevo(to)
+        if not recipient:
+            return ProviderResult(ok=False, provider=self.name, error_code="INVALID_PHONE",
+                                  error_message="No usable recipient phone number after normalization.")
+
+        payload: Dict[str, Any] = {
+            "sender": settings.BREVO_SMS_SENDER,
+            "recipient": recipient,
+            "content": body,
+            "type": "transactional",
+        }
+        headers = {"api-key": settings.BREVO_API_KEY, "Content-Type": "application/json"}
+        try:
+            with httpx.Client(timeout=10) as client:
+                resp = client.post(self._API_URL, json=payload, headers=headers)
+        except httpx.HTTPError:
+            return ProviderResult(ok=False, provider=self.name, error_code="TRANSPORT_ERROR",
+                                  error_message="Brevo SMS API unreachable.")
+
+        if resp.status_code in (401, 403):
+            # Never log the response body — it can echo request/key context.
+            logger.warning("Brevo SMS API rejected the request: HTTP %s", resp.status_code)
+            return ProviderResult(ok=False, provider=self.name, error_code="BREVO_AUTH_ERROR",
+                                  error_message="Brevo rejected the API key.")
+        if resp.status_code >= 400:
+            logger.warning("Brevo SMS API error: HTTP %s", resp.status_code)
+            return ProviderResult(ok=False, provider=self.name, error_code=f"HTTP_{resp.status_code}",
+                                  error_message="Brevo SMS API rejected the request.")
+        try:
+            resp_payload = resp.json()
+        except ValueError:
+            resp_payload = {}
+        # A successful submission means Brevo ACCEPTED the request — never
+        # DELIVERED, which only a real delivery confirmation could claim.
+        # SMS has no delivery webhook in this phase; status stops at SENT.
+        return ProviderResult(ok=True, status="SENT", provider=self.name,
+                              provider_message_id=_extract_provider_message_id(resp_payload))
+
+
+class BrevoWhatsAppProvider(CommunicationProvider):
+    """
+    Real Brevo transactional WhatsApp — POST https://api.brevo.com/v3/whatsapp/sendMessage,
+    `api-key` header auth — see developers.brevo.com/docs/whatsapp-messages.
+    Brevo requires a pre-approved templateId (created in Brevo's dashboard
+    under Campaigns > WhatsApp) for any message; this provider NEVER sends
+    free text — the caller resolves template_id via
+    settings.resolved_whatsapp_template() (Brevo-sourced when
+    RECON_COMMUNICATIONS_MODE=real — see config.py), and this provider
+    refuses to send without one, the same "no unapproved free text" contract
+    WebhookWhatsAppProvider already enforces.
+    """
+    name = "BREVO_WHATSAPP"
+    _API_URL = "https://api.brevo.com/v3/whatsapp/sendMessage"
+
+    def send(self, *, to: str, subject: str, body: str,
+              template_id: Optional[str] = None, template_vars: Optional[dict] = None) -> ProviderResult:
+        if not settings.BREVO_API_KEY:
+            return ProviderResult(ok=False, provider=self.name, error_code="NOT_CONFIGURED",
+                                  error_message="BREVO_API_KEY is not set.")
+        if not settings.BREVO_WHATSAPP_SENDER:
+            return ProviderResult(ok=False, provider=self.name, error_code="NOT_CONFIGURED",
+                                  error_message="BREVO_WHATSAPP_SENDER is not set.")
+        if not template_id:
+            return ProviderResult(ok=False, provider=self.name, error_code="TEMPLATE_NOT_CONFIGURED",
+                                  error_message="No Brevo WhatsApp templateId is configured for this "
+                                                "message type (BREVO_WHATSAPP_TEMPLATE_IDS) — refusing "
+                                                "to send unapproved free text as a template message.")
+        recipient = _normalize_phone_for_brevo(to)
+        if not recipient:
+            return ProviderResult(ok=False, provider=self.name, error_code="INVALID_PHONE",
+                                  error_message="No usable recipient phone number after normalization.")
+
+        # Brevo's documented templateId is numeric; RECON stores it as a
+        # string (same key=value convention as WHATSAPP_TEMPLATE_IDS) — best-
+        # effort int conversion, falling back to the raw string rather than
+        # failing the send over a formatting difference.
+        resolved_template: Any = template_id
+        try:
+            resolved_template = int(template_id)
+        except (TypeError, ValueError):
+            pass
+
+        payload: Dict[str, Any] = {
+            "contactNumbers": [recipient],
+            "senderNumber": settings.BREVO_WHATSAPP_SENDER,
+            "templateId": resolved_template,
+        }
+        if template_vars:
+            payload["params"] = template_vars
+
+        headers = {"api-key": settings.BREVO_API_KEY, "Content-Type": "application/json"}
+        try:
+            with httpx.Client(timeout=10) as client:
+                resp = client.post(self._API_URL, json=payload, headers=headers)
+        except httpx.HTTPError:
+            return ProviderResult(ok=False, provider=self.name, error_code="TRANSPORT_ERROR",
+                                  error_message="Brevo WhatsApp API unreachable.")
+
+        if resp.status_code in (401, 403):
+            logger.warning("Brevo WhatsApp API rejected the request: HTTP %s", resp.status_code)
+            return ProviderResult(ok=False, provider=self.name, error_code="BREVO_AUTH_ERROR",
+                                  error_message="Brevo rejected the API key.")
+        if resp.status_code >= 400:
+            logger.warning("Brevo WhatsApp API error: HTTP %s", resp.status_code)
+            return ProviderResult(ok=False, provider=self.name, error_code=f"HTTP_{resp.status_code}",
+                                  error_message="Brevo WhatsApp API rejected the request.")
+        try:
+            resp_payload = resp.json()
+        except ValueError:
+            resp_payload = {}
+        return ProviderResult(ok=True, status="SENT", provider=self.name,
+                              provider_message_id=_extract_provider_message_id(resp_payload))
+
+
 _FAKE = {"EMAIL": FakeEmailProvider, "SMS": FakeSMSProvider, "WHATSAPP": FakeWhatsAppProvider}
-_REAL = {"EMAIL": SmtpEmailProvider, "SMS": WebhookSMSProvider, "WHATSAPP": WebhookWhatsAppProvider}
+_REAL = {"EMAIL": SmtpEmailProvider, "SMS": BrevoSmsProvider, "WHATSAPP": BrevoWhatsAppProvider}
 
 
 def get_communication_provider(channel: str) -> CommunicationProvider:

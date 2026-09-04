@@ -96,13 +96,20 @@ def get_connections_overview(ctx: AuthContext = Depends(get_auth_context), db: S
         mode=settings.RECON_COMMUNICATIONS_MODE, configured=smtp_configured,
         smtp_host_set=bool(settings.SMTP_HOST), use_ssl=bool(settings.SMTP_USE_SSL),
     )
-    sms_configured = bool(settings.SMS_PROVIDER_WEBHOOK_URL)
+    # Real SMS/WhatsApp now means Brevo's REST API (BrevoSmsProvider /
+    # BrevoWhatsAppProvider — see services/communications/providers.py), not
+    # the generic SMS_PROVIDER_WEBHOOK_URL/WHATSAPP_PROVIDER_WEBHOOK_URL
+    # shape those settings describe — "configured" reflects what the active
+    # real provider actually needs.
+    sms_configured = bool(settings.BREVO_API_KEY and settings.BREVO_SMS_SENDER)
     sms = SmsConnectionStatus(
         status="CONNECTED" if (settings.RECON_COMMUNICATIONS_MODE == "real" and sms_configured)
                else "FAKE_MODE" if settings.RECON_COMMUNICATIONS_MODE == "fake" else "NOT_CONFIGURED",
         mode=settings.RECON_COMMUNICATIONS_MODE, configured=sms_configured,
     )
-    whatsapp_configured = bool(settings.WHATSAPP_PROVIDER_WEBHOOK_URL)
+    whatsapp_configured = bool(
+        settings.BREVO_API_KEY and settings.BREVO_WHATSAPP_SENDER and settings.BREVO_WHATSAPP_TEMPLATE_IDS
+    )
     whatsapp = WhatsAppConnectionStatus(
         status="CONNECTED" if (settings.RECON_COMMUNICATIONS_MODE == "real" and whatsapp_configured)
                else "FAKE_MODE" if settings.RECON_COMMUNICATIONS_MODE == "fake" else "NOT_CONFIGURED",
