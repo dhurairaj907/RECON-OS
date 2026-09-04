@@ -149,6 +149,56 @@ def test_diagnosis_gateway_error_code_fallback():
     assert d.failure_category == FailureCategory.TECHNICAL_GATEWAY
 
 
+def test_diagnosis_bad_request_error_real_razorpay_shape():
+    """
+    Real Razorpay TEST-mode payment.failed shape observed in production
+    (RC-10002/RC-10003/RC-10004 — wallet/airtelmoney, error_source=issuer,
+    error_step=payment_authorization): error_code=BAD_REQUEST_ERROR,
+    error_reason=payment_failed, and a description that reads as a temporary,
+    refund-guaranteed issue with no decline/funds/timeout/risk/abandonment
+    language. Must resolve via the error_code fallback to TECHNICAL_GATEWAY,
+    not UNKNOWN — this was the confirmed real-world UNKNOWN cause.
+    """
+    ctx = make_context(
+        failure_code="BAD_REQUEST_ERROR",
+        failure_reason="payment_failed",
+        failure_description=(
+            "Your payment didn't go through due to a temporary issue. "
+            "Any debited amount will be refunded in 4-5 business days."
+        ),
+        payment_method="wallet",
+    )
+    d = diagnose(ctx)
+    assert d.failure_category == FailureCategory.TECHNICAL_GATEWAY
+    assert d.failure_category != FailureCategory.UNKNOWN
+    assert 0.0 <= d.confidence <= 1.0
+
+
+def test_diagnosis_bad_request_error_does_not_leak_into_other_categories():
+    """The new fallback must never fire ahead of an explicit, more specific
+    signal — reason overrides and keyword rules still take priority over the
+    error_code fallback (existing precedence, unchanged)."""
+    ctx = make_context(
+        failure_code="BAD_REQUEST_ERROR",
+        failure_reason="payment_risk_check_failed",
+        failure_description="",
+    )
+    d = diagnose(ctx)
+    assert d.failure_category == FailureCategory.RISK_BLOCK
+
+
+def test_diagnosis_unknown_still_reachable_for_genuinely_unmapped_codes():
+    """UNKNOWN must remain a legitimate outcome — an unmapped, unrecognised
+    error_code with no keyword match is still UNKNOWN after this change."""
+    ctx = make_context(
+        failure_code="SOME_UNMAPPED_FUTURE_CODE",
+        failure_reason="something_new",
+        failure_description="",
+    )
+    d = diagnose(ctx)
+    assert d.failure_category == FailureCategory.UNKNOWN
+
+
 # ---------------------------------------------------------------------------
 # 4, 5, 6. Prediction
 # ---------------------------------------------------------------------------

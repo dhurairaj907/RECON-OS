@@ -167,7 +167,8 @@ def evaluate_intent_case(ctx: CaseContext, diagnosis: DiagnosisResult,
                 error_type="schema_validation",
             )
 
-        model_id = result.model or settings.resolved_llm_model("gemini")
+        model_id = result.model or settings.resolved_llm_model(settings.LLM_PROVIDER)
+        provider_name = (result.provider or settings.LLM_PROVIDER or "").upper() or "UNKNOWN"
         ai_result = IntentResult(
             classification=validated.classification,
             confidence=round(float(validated.confidence), 4),
@@ -177,12 +178,12 @@ def evaluate_intent_case(ctx: CaseContext, diagnosis: DiagnosisResult,
             unavailable_signals=deterministic.unavailable_signals,
             evidence_completeness=deterministic.evidence_completeness,
             rationale=validated.rationale.strip()[:800],
-            provider="GEMINI",
+            provider=provider_name,
             provider_version=model_id,
             evaluated_at=deterministic.evaluated_at,
         )
         meta = AIIntentMeta(
-            attempted=True, used_ai=True, provider="GEMINI", provider_version=model_id,
+            attempted=True, used_ai=True, provider=provider_name, provider_version=model_id,
         )
         return ai_result, meta
 

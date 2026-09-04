@@ -63,8 +63,10 @@ def _latest_intel(db: Session, case_id) -> CaseIntelligence | None:
 
 
 def diagnosis_source(ci: CaseIntelligence) -> str:
-    """UI-facing label for where the diagnosis came from."""
-    if (ci.provider or "").upper() == "GEMINI":
+    """UI-facing label for where the diagnosis came from. Provider-agnostic —
+    "AI-ENHANCED" whenever a real LLM provider (Gemini, NVIDIA NIM, or any
+    future one) produced the diagnosis, not just Gemini specifically."""
+    if (ci.provider or "").upper() not in ("", "DETERMINISTIC"):
         return "AI-ENHANCED"
     fell_back = bool((ci.diagnosis_json or {}).get("fallback_reason"))
     return "DETERMINISTIC FALLBACK" if fell_back else "DETERMINISTIC"

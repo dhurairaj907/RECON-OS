@@ -84,9 +84,23 @@ DIAGNOSIS_KEYWORD_RULES = [
 ]
 
 # Known Razorpay error_code fallbacks when no keyword matched
+#
+# BAD_REQUEST_ERROR is Razorpay's broadest top-level error code — confirmed
+# via real (non-simulated) production TEST-mode payment.failed events
+# (RC-10002/RC-10003/RC-10004: error_code=BAD_REQUEST_ERROR,
+# error_reason=payment_failed, error_description="Your payment didn't go
+# through due to a temporary issue. Any debited amount will be refunded in
+# 4-5 business days.") that were previously falling through every rule to
+# UNKNOWN. Mapped to TECHNICAL_GATEWAY, not BANK_DECLINE/AUTH_TIMEOUT/
+# INSUFFICIENT_FUNDS/RISK_BLOCK/USER_ABANDONED — the description explicitly
+# frames the failure as temporary and refund-guaranteed, not a considered
+# decline, a funds shortfall, an auth/OTP timeout, a risk block, or customer
+# abandonment. Given lower than GATEWAY_ERROR/SERVER_ERROR because
+# BAD_REQUEST_ERROR is a much broader, less specific bucket than those two.
 DIAGNOSIS_ERROR_CODE_FALLBACK = {
     "GATEWAY_ERROR": ("TECHNICAL_GATEWAY", 0.55),
     "SERVER_ERROR": ("TECHNICAL_GATEWAY", 0.60),
+    "BAD_REQUEST_ERROR": ("TECHNICAL_GATEWAY", 0.50),
 }
 
 DIAGNOSIS_REASON_OVERRIDES = {

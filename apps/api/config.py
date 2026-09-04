@@ -226,17 +226,32 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-2.0-flash"
 
+    # --- NVIDIA NIM-specific (server-side only) ---
+    # Works unmodified against either NVIDIA's hosted API catalog
+    # (https://integrate.api.nvidia.com/v1, the default) or a self-hosted NIM
+    # container (point NVIDIA_NIM_BASE_URL at it) — both expose the same
+    # OpenAI-compatible /chat/completions route. No default model: the NIM
+    # catalog spans many models with different capabilities/cost, and
+    # guessing one would be invented configuration, not a safe default.
+    NVIDIA_NIM_API_KEY: str = ""
+    NVIDIA_NIM_MODEL: str = ""
+    NVIDIA_NIM_BASE_URL: str = "https://integrate.api.nvidia.com/v1"
+
     def resolved_llm_key(self, provider: str) -> str:
         """Server-side key resolution per provider. Never logged, never returned."""
         p = (provider or "").lower()
         if p == "gemini":
             return self.GEMINI_API_KEY or self.LLM_API_KEY
+        if p == "nvidia_nim":
+            return self.NVIDIA_NIM_API_KEY or self.LLM_API_KEY
         return self.LLM_API_KEY
 
     def resolved_llm_model(self, provider: str) -> str:
         p = (provider or "").lower()
         if p == "gemini":
             return self.GEMINI_MODEL or self.LLM_MODEL or "gemini-2.0-flash"
+        if p == "nvidia_nim":
+            return self.NVIDIA_NIM_MODEL or self.LLM_MODEL
         return self.LLM_MODEL
 
 

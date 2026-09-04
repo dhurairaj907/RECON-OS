@@ -22,9 +22,15 @@ def _make_gemini() -> LLMProvider:
     return GeminiProvider()
 
 
+def _make_nvidia_nim() -> LLMProvider:
+    from integrations.llm.nvidia_nim import NvidiaNimProvider
+    return NvidiaNimProvider()
+
+
 # name -> factory callable
 _PROVIDERS: dict = {
     "gemini": _make_gemini,
+    "nvidia_nim": _make_nvidia_nim,
 }
 
 

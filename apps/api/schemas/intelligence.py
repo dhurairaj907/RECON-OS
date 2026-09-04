@@ -154,7 +154,7 @@ class DiagnosisResult(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     rationale: str
     evidence: List[str] = []
-    provider: str = "DETERMINISTIC"          # "DETERMINISTIC" | "GEMINI"
+    provider: str = "DETERMINISTIC"          # "DETERMINISTIC" | "GEMINI" | "NVIDIA_NIM"
     provider_version: Optional[str] = None   # e.g. "gemini-2.0-flash" / "deterministic-2.5"
     fallback_reason: Optional[str] = None    # set when an AI attempt fell back to deterministic
 
@@ -208,7 +208,7 @@ class IntentResult(BaseModel):
     unavailable_signals: List[str] = []
     evidence_completeness: float = Field(ge=0.0, le=1.0)
     rationale: str
-    provider: str = "DETERMINISTIC"          # "DETERMINISTIC" | "GEMINI"
+    provider: str = "DETERMINISTIC"          # "DETERMINISTIC" | "GEMINI" | "NVIDIA_NIM"
     provider_version: Optional[str] = None
     evaluated_at: datetime
 
@@ -311,7 +311,7 @@ class IntelligenceEnvelope(BaseModel):
     analyzed: bool
     intelligence_enabled: bool
     status: str
-    provider: Optional[str] = None            # "DETERMINISTIC" | "GEMINI"
+    provider: Optional[str] = None            # "DETERMINISTIC" | "GEMINI" | "NVIDIA_NIM"
     provider_version: Optional[str] = None
     intelligence_version: Optional[str] = None
     diagnosis_source: Optional[str] = None    # "AI-ENHANCED" | "DETERMINISTIC FALLBACK" | "DETERMINISTIC"

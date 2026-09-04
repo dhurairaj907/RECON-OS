@@ -178,9 +178,10 @@ def diagnose_case(ctx: CaseContext) -> Tuple[DiagnosisResult, AIDiagnosisMeta]:
             return _deterministic(ctx, fallback_reason="AI response failed schema validation",
                                   error_type="schema_validation", attempted=True)
 
-        model_id = result.model or settings.resolved_llm_model("gemini")
+        model_id = result.model or settings.resolved_llm_model(settings.LLM_PROVIDER)
+        provider_name = (result.provider or settings.LLM_PROVIDER or "").upper() or "UNKNOWN"
         evidence = _sanitise_evidence(validated.evidence)
-        evidence.append("source: Gemini structured diagnosis over supplied CaseContext")
+        evidence.append(f"source: {provider_name} structured diagnosis over supplied CaseContext")
 
         diag = DiagnosisResult(
             failure_category=validated.failure_category,
@@ -188,12 +189,12 @@ def diagnose_case(ctx: CaseContext) -> Tuple[DiagnosisResult, AIDiagnosisMeta]:
             confidence=round(float(validated.confidence), 4),
             rationale=validated.rationale.strip()[:800],
             evidence=evidence,
-            provider="GEMINI",
+            provider=provider_name,
             provider_version=model_id,
             fallback_reason=None,
         )
         meta = AIDiagnosisMeta(
-            attempted=True, used_ai=True, provider="GEMINI",
+            attempted=True, used_ai=True, provider=provider_name,
             provider_version=model_id, fallback_reason=None, error_type=None,
         )
         return diag, meta
