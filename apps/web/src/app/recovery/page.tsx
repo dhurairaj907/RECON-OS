@@ -19,6 +19,23 @@ import type { GlowTone } from "@/components/spatial/AtmosphericGlow";
 import { api } from "@/lib/api";
 import { RecoveryCase, PaginatedResponse, DashboardMetrics } from "@/lib/types";
 import { cn, formatINR, formatDateTime, formatRelativeTime } from "@/lib/utils";
+import { ELIGIBLE_STRATEGIES } from "@/components/spatial/pipeline-model";
+
+/**
+ * A policy_verdict of NEEDS_APPROVAL does not by itself mean an executable
+ * RecoveryAction exists to approve — the Policy Engine also forces
+ * NEEDS_APPROVAL for a MANUAL_REVIEW strategy, which can never become a
+ * RecoveryAction (see pipeline-model.ts). Distinguish the two here using
+ * the SAME eligibility signal already embedded in the case's intelligence
+ * summary (`recommended_action`), so the case list never implies an
+ * approvable payment-link action exists when none was ever proposable.
+ */
+function intelligenceLabel(c: RecoveryCase): string {
+  const verdict = c.intelligence?.policy_verdict;
+  if (verdict !== "NEEDS_APPROVAL") return verdict || "";
+  const strategyEligible = ELIGIBLE_STRATEGIES.includes(c.intelligence?.recommended_action || "");
+  return strategyEligible ? "PENDING APPROVAL" : "NEEDS REVIEW";
+}
 
 const priorityTone: Record<string, GlowTone> = {
   CRITICAL: "danger",
@@ -107,11 +124,11 @@ export default function RecoveryCasesPage() {
             subtitle="DETECTED + OPEN"
           />
           <StatCard
-            title="Needs Approval"
+            title="Needs Review"
             value={metrics.intelligence?.needs_approval ?? "—"}
             icon={CheckCircle2}
             variant="info"
-            subtitle="Policy verdict pending a human"
+            subtitle="Policy or intelligence requires human review"
           />
         </div>
       )}
@@ -243,7 +260,7 @@ export default function RecoveryCasesPage() {
                                   : "text-status-warning"
                               }
                             >
-                              {c.intelligence.policy_verdict}
+                              {intelligenceLabel(c)}
                             </span>
                             <span className="text-fg-faint">
                               {c.intelligence.failure_category} ·{" "}

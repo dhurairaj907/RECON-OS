@@ -175,7 +175,7 @@ export default function CommandCenterPage() {
             {[
               { label: "Cases Analyzed", value: metrics.intelligence.cases_analyzed, tone: "text-fg" },
               { label: "High Recovery Probability", value: metrics.intelligence.high_recovery_probability, tone: "text-status-success" },
-              { label: "Needs Approval", value: metrics.intelligence.needs_approval, tone: "text-status-warning" },
+              { label: "Needs Review", value: metrics.intelligence.needs_approval, tone: "text-status-warning" },
               { label: "Policy Rejected", value: metrics.intelligence.policy_rejected, tone: "text-status-danger" },
             ].map((m) => (
               <div key={m.label}>

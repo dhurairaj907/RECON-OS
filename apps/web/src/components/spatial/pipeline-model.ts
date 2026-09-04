@@ -177,7 +177,16 @@ export function deriveCasePipeline(
       sub: manualReviewHold ? "NO AUTOMATED ACTION" : "CREATE_PAYMENT_LINK",
     };
   } else {
+    // A REAL RecoveryAction exists — it is always the source of truth for
+    // action state (see requirement: never infer from policy_verdict once
+    // an action exists). blocked_reason=NEEDS_APPROVAL specifically means a
+    // genuinely executable action is on hold for a human decision — show
+    // that plainly ("AWAITING APPROVAL" + the real action type) rather than
+    // the raw enum string. Every OTHER blocked_reason (POLICY_REJECTED,
+    // RAZORPAY_NOT_CONFIGURED, etc.) is left showing its raw reason,
+    // unchanged — those aren't an approval state at all.
     const st = (action.status || "").toUpperCase();
+    const awaitingApproval = st === "BLOCKED" && action.blocked_reason === "NEEDS_APPROVAL";
     action_ = {
       key: "action",
       label: "ACTION",
@@ -194,12 +203,14 @@ export function deriveCasePipeline(
       value:
         st === "EXECUTED"
           ? "PAYMENT LINK SENT"
+          : awaitingApproval
+          ? "AWAITING APPROVAL"
           : st === "BLOCKED"
           ? action.blocked_reason || "BLOCKED"
           : st === "FAILED"
           ? action.error_code || "FAILED"
           : action.action_type,
-      sub: action.reference_id || undefined,
+      sub: awaitingApproval ? action.action_type : action.reference_id || undefined,
     };
   }
 

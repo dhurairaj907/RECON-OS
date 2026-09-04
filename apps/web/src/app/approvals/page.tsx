@@ -64,7 +64,7 @@ export default function ApprovalsPage() {
       <SectionBand
         eyebrow="HUMAN APPROVAL QUEUE"
         title="APPROVALS"
-        subtitle="Every case the Policy Engine has flagged as requiring a human decision before any recovery action executes."
+        subtitle="Executable recovery actions waiting for a human decision — not every case flagged for review, only ones with a real action to approve or reject."
       />
 
       {isLoading ? (
@@ -105,7 +105,7 @@ export default function ApprovalsPage() {
         ) : queue.length === 0 ? (
           <EmptyState
             title="No pending approvals"
-            description="Every analysed case is currently either auto-approved, rejected by policy, or already actioned. Cases needing a human decision will appear here."
+            description="No executable recovery action is currently waiting on a human decision. Cases flagged for manual review with no automated action (e.g. MANUAL_REVIEW strategy) appear on the Recovery page instead — this queue is only for real, executable actions."
             icon={ClipboardCheck}
             actionText="View Recovery Cases"
             actionHref="/recovery"
