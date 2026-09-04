@@ -29,10 +29,11 @@ from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
-from integrations.razorpay.adapter import get_razorpay_adapter
+from integrations.razorpay.adapter import PaymentLinkResult, get_razorpay_adapter
 from models.recovery_action import RecoveryAction
 from models.recovery_case import RecoveryCase
 from schemas.intelligence import StrategyAction, StrategyResult
+from services.actions.collision import is_reference_collision, reconcile_collision
 from services.actions.common import (
     PAYMENT_LINK_ELIGIBLE_STRATEGIES,
     TERMINAL_CASE_STATUSES,
@@ -76,6 +77,13 @@ def execute_action(db: Session, action_id) -> RecoveryAction:
 
     # --- IDEMPOTENCY: a Payment Link was already created — return it, no re-call ---
     if action.provider_action_id or action.status in ("EXECUTED", "EXECUTING"):
+        if action.provider_action_id:
+            audit_action(db, action, "ACTION_ENGINE", "PAYMENT_LINK_REUSED",
+                         f"Execution requested for {action.reference_id} but a Payment Link "
+                         f"({action.provider_action_id}) already exists for this action — "
+                         f"reusing it, no second Razorpay call made.",
+                         {"payment_link_id": action.provider_action_id})
+            db.commit()
         logger.info("Action %s already executed (%s) — returning existing result",
                     action.reference_id, action.status)
         return action
@@ -228,6 +236,45 @@ def execute_action(db: Session, action_id) -> RecoveryAction:
                            "verification required before any retry", action.reference_id)
             return action
 
+        if result.error_code == "RAZORPAY_BAD_REQUEST" and is_reference_collision(result.error_message):
+            # A payment link with this exact reference_id already exists at
+            # Razorpay — either an earlier attempt for THIS action succeeded
+            # without RECON durably recording it, or something unrelated
+            # already holds the reference. Never blindly retry (that's what
+            # produced the collision in the first place) and never mark this
+            # a plain FAILED (that would license exactly the retry that
+            # caused the duplicate-reference error). See
+            # services/actions/collision.py for the full decision.
+            outcome = reconcile_collision(db, action)
+            action = outcome.action
+            if outcome.reconciled:
+                logger.info("Reconciled %s with existing Razorpay Payment Link %s "
+                           "(no duplicate created)", action.reference_id, action.provider_action_id)
+                _maybe_notify_action_executed(db, case, action)
+                return action
+
+            # Reference regenerated — one bounded retry with the new
+            # reference, never a loop. If Razorpay accepts it, this is a
+            # completely normal successful creation.
+            cust = case.customer
+            retry_result = adapter.create_payment_link(
+                amount_paise=amount_paise,
+                currency="INR",
+                reference_id=action.reference_id,
+                description=f"RECON OS revenue recovery — {case.case_number}",
+                customer_name=(cust.name if cust else None),
+                customer_email=(cust.email if cust else None),
+                customer_contact=(cust.phone if cust else None),
+                notes={
+                    "recon_case": case.case_number,
+                    "recon_action_id": str(action.id),
+                    "recon_reference_id": action.reference_id,
+                },
+            )
+            if retry_result.ok:
+                return _finalize_executed(db, case, action, retry_result, amount_paise)
+            result = retry_result  # fall through to the standard FAILED handling below
+
         action.status = "FAILED"
         action.error_code = result.error_code
         action.error_message = result.error_message
@@ -240,6 +287,39 @@ def execute_action(db: Session, action_id) -> RecoveryAction:
         db.refresh(action)
         return action
 
+    return _finalize_executed(db, case, action, result, amount_paise)
+
+
+def _maybe_notify_action_executed(db: Session, case: RecoveryCase, action: RecoveryAction) -> None:
+    """
+    The "payment link created" communication is only meaningful while the
+    link is genuinely awaiting payment (outcome PENDING) — mirrors the
+    normal creation path exactly. If reconciliation found the link already
+    paid/expired/cancelled, apply_recovery()/mark_link_terminal() (called
+    inside reconcile_collision -> dispatch_payment_link_status) already
+    triggered whatever communication is appropriate for THAT outcome, or
+    none for a terminal state — never a second, wrong notification here.
+    send_communication()'s own per-(case, action, channel, message_type)
+    idempotency key (services/communications/service.py) additionally
+    guarantees a retry of this same action can never send a duplicate
+    "payment link created" message even if this is called more than once.
+    """
+    if (action.outcome or "").upper() != "PENDING":
+        return
+    try:
+        from services.communications.automation import on_action_executed
+        on_action_executed(db, merchant_id=action.merchant_id, case=case, action=action)
+    except Exception:
+        logger.exception("Automatic communication hook failed for %s (non-fatal)", action.reference_id)
+
+
+def _finalize_executed(
+    db: Session, case: RecoveryCase, action: RecoveryAction,
+    result: "PaymentLinkResult", amount_paise: int,
+) -> RecoveryAction:
+    """Shared success path for both a normal fresh creation and a bounded
+    retry with a regenerated reference after a collision — identical
+    behaviour either way, defined once so they can never drift apart."""
     # Success — Payment Link created. This is NOT revenue recovered.
     action.status = "EXECUTED"
     action.outcome = "PENDING"
@@ -268,11 +348,7 @@ def execute_action(db: Session, action_id) -> RecoveryAction:
     # never able to affect the execution result above — see
     # services/communications/automation.py). A failure here is caught inside
     # the hook itself and can never surface as an execution failure.
-    try:
-        from services.communications.automation import on_action_executed
-        on_action_executed(db, merchant_id=action.merchant_id, case=case, action=action)
-    except Exception:
-        logger.exception("Automatic communication hook failed for %s (non-fatal)", action.reference_id)
+    _maybe_notify_action_executed(db, case, action)
 
     return action
 

@@ -23,12 +23,50 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from integrations.razorpay.adapter import get_razorpay_adapter
+from integrations.razorpay.adapter import PaymentLinkStatusResult, get_razorpay_adapter
 from models.recovery_action import RecoveryAction
 from services.actions.common import audit_action
 from services.actions.verification import apply_recovery, mark_link_terminal
 
 logger = logging.getLogger("recon.services.actions.reconcile")
+
+
+def dispatch_payment_link_status(
+    db: Session, action: RecoveryAction, res: PaymentLinkStatusResult, source_event_id: str
+) -> str:
+    """
+    Given an authoritative PaymentLinkStatusResult (res.ok must already be
+    True) from Razorpay — via GET /payment_links/{id} or a reference-id
+    search — settle the action's state using the SAME validated transitions
+    used everywhere else in Phase 3 (apply_recovery() / mark_link_terminal())
+    rather than a bespoke write. Returns the resolved Razorpay status string.
+    Never determines payment completion itself; only reflects what Razorpay
+    reported. Shared by reconcile_action() below and the reference-collision
+    reconciliation path (services/actions/collision.py) so both use the
+    identical dispatch logic.
+    """
+    status = (res.status or "").lower()
+    paid_paise = int(res.amount_paid_paise or 0)
+    expected_paise = int(action.amount_paise or 0)
+
+    audit_action(db, action, "RAZORPAY_ADAPTER", "RECONCILE_STATUS",
+                 f"Razorpay reports payment_link.status='{status}', "
+                 f"amount_paid={paid_paise} / expected={expected_paise}",
+                 {"razorpay_status": status, "amount_paid_paise": paid_paise,
+                  "amount_expected_paise": expected_paise, "payments": res.payments})
+
+    if status in ("expired", "cancelled"):
+        mark_link_terminal(db, action, status, source_event_id)
+        return status
+
+    if status == "paid" or paid_paise > 0:
+        effective_paid = paid_paise if paid_paise > 0 else (expected_paise if status == "paid" else 0)
+        apply_recovery(db, action, amount_paid_paise=effective_paid, currency=res.currency,
+                       source_event_id=source_event_id, provider_status=status or "paid",
+                       simulated=False)
+        return status
+
+    return status
 
 
 @dataclass
