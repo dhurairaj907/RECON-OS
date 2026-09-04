@@ -25,7 +25,12 @@
  */
 
 import assert from "node:assert/strict";
-import { deriveCasePipeline, ELIGIBLE_STRATEGIES } from "./pipeline-model";
+import {
+  deriveCasePipeline,
+  deriveAnalysisPresentation,
+  deriveExecutePresentation,
+  ELIGIBLE_STRATEGIES,
+} from "./pipeline-model";
 import type { IntelligenceEnvelope, RecoveryAction } from "@/lib/types";
 
 function baseAction(overrides: Partial<RecoveryAction>): RecoveryAction {
@@ -226,10 +231,67 @@ function test_no_action_and_rejected_shows_no_action() {
   console.log("PASS: test_no_action_and_rejected_shows_no_action");
 }
 
+// ---------------------------------------------------------------------------
+// 7-10. deriveAnalysisPresentation — production UX fix regression tests.
+//    Production bug: "Analyze Case" was shown as the PRIMARY action even
+//    when INTELLIGENCE_ENABLED=true (automation on), misleadingly implying
+//    the human must always trigger it manually.
+// ---------------------------------------------------------------------------
+function test_analysis_presentation_automatic_enabled_demotes_manual_button() {
+  const ap = deriveAnalysisPresentation(true);
+  assert.equal(ap.mode, "automatic_pending");
+  assert.equal(ap.showManualButtonAsPrimary, false, "must not present Analyze as primary when automation is on");
+  console.log("PASS: test_analysis_presentation_automatic_enabled_demotes_manual_button");
+}
+
+function test_analysis_presentation_automatic_disabled_keeps_manual_primary() {
+  const ap = deriveAnalysisPresentation(false);
+  assert.equal(ap.mode, "manual_required");
+  assert.equal(ap.showManualButtonAsPrimary, true, "manual fallback must remain available and primary when automation is off");
+  assert.match(ap.detail, /disabled/i);
+  console.log("PASS: test_analysis_presentation_automatic_disabled_keeps_manual_primary");
+}
+
+// ---------------------------------------------------------------------------
+// 11-13. deriveExecutePresentation — production UX fix regression tests.
+//    Production bug: "Execute Approved Recovery" was shown as the PRIMARY
+//    action for every APPROVED case with no action yet, regardless of
+//    AUTOMATIC_ACTION_EXECUTION_ENABLED.
+// ---------------------------------------------------------------------------
+function test_execute_presentation_automatic_enabled_high_band_demotes_manual_button() {
+  const ep = deriveExecutePresentation(true, "HIGH");
+  assert.equal(ep.mode, "automatic_active");
+  assert.equal(ep.showManualButtonAsPrimary, false, "must not present Execute as primary when auto-execution is on");
+  console.log("PASS: test_execute_presentation_automatic_enabled_high_band_demotes_manual_button");
+}
+
+function test_execute_presentation_automatic_enabled_low_band_keeps_manual_primary() {
+  // Mirrors orchestrator.py's own Recovery Opportunity gate exactly:
+  // LOW band -> automatic execution is deliberately skipped even though
+  // Policy approved it. Must not claim "being executed automatically".
+  const ep = deriveExecutePresentation(true, "LOW");
+  assert.equal(ep.mode, "automatic_skipped_low_opportunity");
+  assert.equal(ep.showManualButtonAsPrimary, true, "manual override must remain primary when automation deliberately skipped a LOW-opportunity case");
+  assert.match(ep.headline, /SKIPPED/i);
+  console.log("PASS: test_execute_presentation_automatic_enabled_low_band_keeps_manual_primary");
+}
+
+function test_execute_presentation_automatic_disabled_keeps_manual_primary() {
+  const ep = deriveExecutePresentation(false, "HIGH");
+  assert.equal(ep.mode, "manual_required");
+  assert.equal(ep.showManualButtonAsPrimary, true, "manual fallback must remain available and primary when automation is off");
+  console.log("PASS: test_execute_presentation_automatic_disabled_keeps_manual_primary");
+}
+
 test_manual_review_never_claims_payment_link_awaiting_approval();
 test_eligible_strategy_needs_approval_still_renders_awaiting_approval();
 test_rejected_verdict_unaffected();
 test_real_blocked_action_shows_awaiting_approval_and_action_type();
 test_real_action_state_is_source_of_truth_not_policy_verdict();
 test_no_action_and_rejected_shows_no_action();
+test_analysis_presentation_automatic_enabled_demotes_manual_button();
+test_analysis_presentation_automatic_disabled_keeps_manual_primary();
+test_execute_presentation_automatic_enabled_high_band_demotes_manual_button();
+test_execute_presentation_automatic_enabled_low_band_keeps_manual_primary();
+test_execute_presentation_automatic_disabled_keeps_manual_primary();
 console.log("\nAll pipeline-model regression tests passed.");

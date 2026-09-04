@@ -79,6 +79,8 @@ def _envelope(case: RecoveryCase, ci: CaseIntelligence | None) -> IntelligenceEn
             case_number=case.case_number,
             analyzed=False,
             intelligence_enabled=settings.INTELLIGENCE_ENABLED,
+            automatic_action_execution_enabled=settings.AUTOMATIC_ACTION_EXECUTION_ENABLED,
+            automatic_communications_enabled=settings.AUTOMATIC_COMMUNICATIONS_ENABLED,
             status="NOT_RUN",
         )
     return IntelligenceEnvelope(
@@ -86,6 +88,8 @@ def _envelope(case: RecoveryCase, ci: CaseIntelligence | None) -> IntelligenceEn
         case_number=case.case_number,
         analyzed=ci.status != "FAILED",
         intelligence_enabled=settings.INTELLIGENCE_ENABLED,
+        automatic_action_execution_enabled=settings.AUTOMATIC_ACTION_EXECUTION_ENABLED,
+        automatic_communications_enabled=settings.AUTOMATIC_COMMUNICATIONS_ENABLED,
         status=ci.status,
         provider=ci.provider,
         provider_version=ci.provider_version,

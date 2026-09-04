@@ -243,6 +243,49 @@ def test_disabled_by_default_no_auto_analysis(client):
 
 
 # ---------------------------------------------------------------------------
+# Production UX fix regression: the envelope must echo the OTHER two
+# Phase-8 automation flags (AUTOMATIC_ACTION_EXECUTION_ENABLED,
+# AUTOMATIC_COMMUNICATIONS_ENABLED) the same read-only way it already
+# echoes INTELLIGENCE_ENABLED — the frontend has no other way to know
+# whether automation is active for a given case's Analyze/Execute
+# presentation. Covers both the "no CaseIntelligence yet" and "analyzed"
+# envelope branches in routers/intelligence.py::_envelope().
+# ---------------------------------------------------------------------------
+def test_envelope_reflects_automation_flags_before_analysis(client, monkeypatch):
+    monkeypatch.setattr(settings, "AUTOMATIC_ACTION_EXECUTION_ENABLED", True)
+    monkeypatch.setattr(settings, "AUTOMATIC_COMMUNICATIONS_ENABLED", False)
+    sim = client.post("/api/v1/simulator/events", json={
+        "event_type": "payment.failed", "customer_name": "Automation Flags User",
+        "customer_email": "autoflags@example.com", "amount": "4999.00",
+        "payment_method": "upi", "failure_code": "BAD_REQUEST_ERROR",
+        "failure_reason": "payment_failed", "error_description": "timeout",
+    })
+    case_number = sim.json()["case_number"]
+    intel = client.get(f"/api/v1/recovery-cases/{case_number}/intelligence").json()
+    assert intel["analyzed"] is False
+    assert intel["automatic_action_execution_enabled"] is True
+    assert intel["automatic_communications_enabled"] is False
+
+
+def test_envelope_reflects_automation_flags_after_analysis(client, monkeypatch):
+    monkeypatch.setattr(settings, "AUTOMATIC_ACTION_EXECUTION_ENABLED", False)
+    monkeypatch.setattr(settings, "AUTOMATIC_COMMUNICATIONS_ENABLED", True)
+    sim = client.post("/api/v1/simulator/events", json={
+        "event_type": "payment.failed", "customer_name": "Automation Flags User 2",
+        "customer_email": "autoflags2@example.com", "amount": "4999.00",
+        "payment_method": "upi", "failure_code": "BAD_REQUEST_ERROR",
+        "failure_reason": "payment_failed", "error_description": "timeout",
+    })
+    case_number = sim.json()["case_number"]
+    run = client.post(f"/api/v1/recovery-cases/{case_number}/intelligence:analyze")
+    assert run.status_code == 200
+    body = run.json()
+    assert body["analyzed"] is True
+    assert body["automatic_action_execution_enabled"] is False
+    assert body["automatic_communications_enabled"] is True
+
+
+# ---------------------------------------------------------------------------
 # 19 & 20. Phase 1 regression via this module's fixtures
 # ---------------------------------------------------------------------------
 def test_phase1_simulator_still_works(client):

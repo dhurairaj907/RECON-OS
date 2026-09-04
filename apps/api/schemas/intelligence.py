@@ -310,6 +310,13 @@ class IntelligenceEnvelope(BaseModel):
     case_number: str
     analyzed: bool
     intelligence_enabled: bool
+    # Additive, read-only exposure of the other two Phase-8 automation flags
+    # (see config.py) — same pattern as intelligence_enabled above. Lets the
+    # frontend distinguish "automation is running for this case" from
+    # "automation is off, a human must trigger this" without duplicating or
+    # guessing at backend flag state.
+    automatic_action_execution_enabled: bool = False
+    automatic_communications_enabled: bool = False
     status: str
     provider: Optional[str] = None            # "DETERMINISTIC" | "GEMINI" | "NVIDIA_NIM"
     provider_version: Optional[str] = None

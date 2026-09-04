@@ -2,10 +2,11 @@
 
 import React, { useState } from "react";
 import useSWR from "swr";
-import { Mail, MessageSquare, Send, Loader2, Ban } from "lucide-react";
+import { Mail, MessageSquare, Send, Loader2, Ban, Sparkles } from "lucide-react";
 import { api } from "@/lib/api";
 import type { CommunicationChannel, CommunicationMessageType } from "@/lib/types";
 import { cn, formatDateTime } from "@/lib/utils";
+import { deriveCommunicationsPresentation } from "./communications-model";
 
 const CHANNELS: { value: CommunicationChannel; label: string; icon: typeof Mail }[] = [
   { value: "EMAIL", label: "Email", icon: Mail },
@@ -48,7 +49,13 @@ function statusLabel(c: { status: string; error_code?: string | null }): string 
  * eligibility server-side (Policy Engine + human-approval state) — this
  * component never decides whether a message is allowed, only whether to ask.
  */
-export function CommunicationsSection({ caseId }: { caseId: string }) {
+export function CommunicationsSection({
+  caseId,
+  automaticCommunicationsEnabled = false,
+}: {
+  caseId: string;
+  automaticCommunicationsEnabled?: boolean;
+}) {
   const { data, mutate } = useSWR(
     caseId ? `/api/v1/recovery-cases/${caseId}/communications` : null,
     () => api.getCaseCommunications(caseId),
@@ -74,6 +81,55 @@ export function CommunicationsSection({ caseId }: { caseId: string }) {
   };
 
   const items = data?.items || [];
+  const cp = deriveCommunicationsPresentation(automaticCommunicationsEnabled);
+
+  const sendControls = (
+    <>
+      <select
+        value={channel}
+        onChange={(e) => setChannel(e.target.value as CommunicationChannel)}
+        className={cn(
+          "rounded-lg border border-border bg-surface-subtle font-mono text-fg-secondary focus:border-accent focus:outline-none",
+          cp.showSendAsPrimary ? "h-9 px-2.5 text-xs" : "h-8 px-2 text-[11px]"
+        )}
+      >
+        {CHANNELS.map((c) => (
+          <option key={c.value} value={c.value}>{c.label}</option>
+        ))}
+      </select>
+      <select
+        value={messageType}
+        onChange={(e) => setMessageType(e.target.value as CommunicationMessageType)}
+        className={cn(
+          "rounded-lg border border-border bg-surface-subtle font-mono text-fg-secondary focus:border-accent focus:outline-none",
+          cp.showSendAsPrimary ? "h-9 px-2.5 text-xs" : "h-8 px-2 text-[11px]"
+        )}
+      >
+        {MESSAGE_TYPES.map((m) => (
+          <option key={m.value} value={m.value}>{m.label}</option>
+        ))}
+      </select>
+      {cp.showSendAsPrimary ? (
+        <button
+          onClick={handleSend}
+          disabled={busy}
+          className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-accent px-3 font-mono text-xs font-medium text-white transition-colors hover:bg-accent-hover disabled:opacity-50"
+        >
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+          Send
+        </button>
+      ) : (
+        <button
+          onClick={handleSend}
+          disabled={busy}
+          className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-surface-subtle px-2.5 font-mono text-[11px] text-fg-secondary transition-colors hover:bg-surface-elevated hover:text-fg disabled:opacity-50"
+        >
+          {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
+          Send manually now instead of waiting
+        </button>
+      )}
+    </>
+  );
 
   return (
     <div className="space-y-3 border-t border-border/60 pt-4">
@@ -84,34 +140,22 @@ export function CommunicationsSection({ caseId }: { caseId: string }) {
         <span className="text-[11px] font-mono text-fg-faint">{items.length} sent/attempted</span>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <select
-          value={channel}
-          onChange={(e) => setChannel(e.target.value as CommunicationChannel)}
-          className="h-9 rounded-lg border border-border bg-surface-subtle px-2.5 text-xs font-mono text-fg-secondary focus:border-accent focus:outline-none"
-        >
-          {CHANNELS.map((c) => (
-            <option key={c.value} value={c.value}>{c.label}</option>
-          ))}
-        </select>
-        <select
-          value={messageType}
-          onChange={(e) => setMessageType(e.target.value as CommunicationMessageType)}
-          className="h-9 rounded-lg border border-border bg-surface-subtle px-2.5 text-xs font-mono text-fg-secondary focus:border-accent focus:outline-none"
-        >
-          {MESSAGE_TYPES.map((m) => (
-            <option key={m.value} value={m.value}>{m.label}</option>
-          ))}
-        </select>
-        <button
-          onClick={handleSend}
-          disabled={busy}
-          className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-accent px-3 font-mono text-xs font-medium text-white transition-colors hover:bg-accent-hover disabled:opacity-50"
-        >
-          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
-          Send
-        </button>
-      </div>
+      {cp.mode === "automatic" ? (
+        <div className="rounded-lg border border-status-success-border/40 bg-status-success-bg/30 px-3 py-2 space-y-2">
+          <p className="flex items-center gap-1.5 text-[12px] font-mono font-semibold text-status-success">
+            <Sparkles className="h-3.5 w-3.5" /> {cp.headline}
+          </p>
+          <p className="text-[11px] font-mono text-fg-faint leading-relaxed">{cp.detail}</p>
+          <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-status-success-border/30">
+            {sendControls}
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <p className="text-[11px] font-mono text-fg-faint">{cp.detail}</p>
+          <div className="flex flex-wrap items-center gap-2">{sendControls}</div>
+        </div>
+      )}
 
       {result && (
         <p

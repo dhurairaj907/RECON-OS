@@ -26,7 +26,13 @@ import dynamic from "next/dynamic";
 import { api } from "@/lib/api";
 import { IntelligenceEnvelope, IntentResult, RecoveryAction } from "@/lib/types";
 import { cn, formatDateTime, formatINR } from "@/lib/utils";
-import { deriveCasePipeline, ELIGIBLE_STRATEGIES, type StageStatus } from "@/components/spatial/pipeline-model";
+import {
+  deriveCasePipeline,
+  deriveAnalysisPresentation,
+  deriveExecutePresentation,
+  ELIGIBLE_STRATEGIES,
+  type StageStatus,
+} from "@/components/spatial/pipeline-model";
 import { NumberedSteps, type NumberedStep } from "@/components/modules/NumberedSteps";
 import { CommunicationsSection } from "@/components/modules/CommunicationsSection";
 
@@ -550,46 +556,65 @@ function ActionSection({ env, caseId }: { env: IntelligenceEnvelope; caseId: str
                 only the Policy Engine decides whether it is ever permitted.
               </p>
             </div>
-          ) : (
-            <>
-              <div className="rounded-xl border border-hairline bg-surface-subtle/60 p-3 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="inline-flex items-center gap-1 text-[11px] font-mono text-status-success">
-                    <Check className="w-3 h-3" /> POLICY: APPROVED
-                  </span>
-                  <span className="text-[11px] font-mono text-fg-faint">
-                    ACTION ENGINE: ready to execute
-                  </span>
+          ) : (() => {
+            const ep = deriveExecutePresentation(
+              !!env.automatic_action_execution_enabled,
+              env.prediction?.band
+            );
+            return (
+              <>
+                <div className="rounded-xl border border-hairline bg-surface-subtle/60 p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="inline-flex items-center gap-1 text-[11px] font-mono text-status-success">
+                      <Check className="w-3 h-3" /> POLICY: APPROVED
+                    </span>
+                    <span className="inline-flex items-center gap-1 text-[11px] font-mono text-fg-faint">
+                      {ep.mode === "automatic_active" && (
+                        <Loader2 className="w-3 h-3 animate-spin text-status-info" />
+                      )}
+                      {ep.headline}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-[12px] font-mono">
+                    <span className="text-fg-faint">Amount</span>
+                    <span className="text-fg font-semibold tabular-nums">
+                      {formatINR(amount)}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-fg-faint font-mono leading-relaxed">
+                    {ep.detail} The Action Engine independently re-checks Policy
+                    server-side the instant before it ever calls Razorpay — no
+                    button or automation decides anything itself.
+                  </p>
                 </div>
-                <div className="flex items-center justify-between text-[12px] font-mono">
-                  <span className="text-fg-faint">Amount</span>
-                  <span className="text-fg font-semibold tabular-nums">
-                    {formatINR(amount)}
-                  </span>
-                </div>
-                <p className="text-[11px] text-fg-faint font-mono leading-relaxed">
-                  Policy has already authorized this recovery — a failed Razorpay
-                  payment cannot be re-charged via API, so the Action Engine&apos;s
-                  executable recovery is a Test Mode Payment Link the customer pays
-                  on. The Action Engine independently re-checks Policy server-side
-                  the instant before it ever calls Razorpay — this button only
-                  triggers the SAME authorized path RECON runs automatically when
-                  auto-execution is enabled; it does not decide anything itself.
-                </p>
-              </div>
-              <button
-                onClick={createLink}
-                disabled={busy !== null}
-                className="inline-flex h-10 items-center gap-2 rounded-lg bg-accent px-4 font-mono text-sm font-medium text-white transition-colors hover:bg-accent-hover disabled:opacity-50"
-              >
-                {busy === "create" ? (
-                  <><Loader2 className="w-4 h-4 animate-spin" /> Action Engine executing…</>
+                {ep.showManualButtonAsPrimary ? (
+                  <button
+                    onClick={createLink}
+                    disabled={busy !== null}
+                    className="inline-flex h-10 items-center gap-2 rounded-lg bg-accent px-4 font-mono text-sm font-medium text-white transition-colors hover:bg-accent-hover disabled:opacity-50"
+                  >
+                    {busy === "create" ? (
+                      <><Loader2 className="w-4 h-4 animate-spin" /> Action Engine executing…</>
+                    ) : (
+                      <><Link2 className="w-4 h-4" /> Execute Approved Recovery</>
+                    )}
+                  </button>
                 ) : (
-                  <><Link2 className="w-4 h-4" /> Execute Approved Recovery</>
+                  <button
+                    onClick={createLink}
+                    disabled={busy !== null}
+                    className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border bg-surface-subtle text-[12px] font-mono text-fg-secondary hover:text-fg hover:bg-surface-elevated transition-colors disabled:opacity-50"
+                  >
+                    {busy === "create" ? (
+                      <><Loader2 className="w-3 h-3 animate-spin" /> Executing…</>
+                    ) : (
+                      <><Link2 className="w-3 h-3" /> Execute manually now instead of waiting</>
+                    )}
+                  </button>
                 )}
-              </button>
-            </>
-          )}
+              </>
+            );
+          })()}
         </>
       )}
 
@@ -946,35 +971,75 @@ export function IntelligencePanel({ caseId, caseNumber }: Props) {
                 {env.error_message}
               </p>
             )}
+            {runError && <p className="text-[12px] text-status-danger font-mono">{runError}</p>}
+            <button
+              onClick={analyze}
+              disabled={running}
+              className="inline-flex h-10 items-center gap-2 rounded-lg bg-accent px-4 font-mono text-sm font-medium text-white transition-colors hover:bg-accent-hover disabled:opacity-50"
+            >
+              {running ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" /> Analyzing case…
+                </>
+              ) : (
+                <>
+                  <Activity className="w-4 h-4" /> Retry Analysis
+                </>
+              )}
+            </button>
           </div>
-        ) : (
-          <div className="space-y-1.5">
-            <p className="text-xs font-mono text-fg-secondary">INTELLIGENCE NOT RUN</p>
-            <p className="text-[12px] text-fg-faint">
-              {env.intelligence_enabled
-                ? "This case has not been analysed yet."
-                : "Automatic analysis is disabled — run it manually below."}
-            </p>
-          </div>
-        )}
-        {runError && (
-          <p className="text-[12px] text-status-danger font-mono">{runError}</p>
-        )}
-        <button
-          onClick={analyze}
-          disabled={running}
-          className="inline-flex h-10 items-center gap-2 rounded-lg bg-accent px-4 font-mono text-sm font-medium text-white transition-colors hover:bg-accent-hover disabled:opacity-50"
-        >
-          {running ? (
-            <>
-              <Loader2 className="w-4 h-4 animate-spin" /> Analyzing case…
-            </>
-          ) : (
-            <>
-              <Activity className="w-4 h-4" /> Analyze Case
-            </>
-          )}
-        </button>
+        ) : (() => {
+          const ap = deriveAnalysisPresentation(env.intelligence_enabled);
+          return (
+            <div className="space-y-2">
+              <div className="space-y-1.5">
+                <p className="text-xs font-mono text-fg-secondary flex items-center gap-1.5">
+                  {ap.mode === "automatic_pending" && (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-status-info" />
+                  )}
+                  {ap.headline}
+                </p>
+                <p className="text-[12px] text-fg-faint">{ap.detail}</p>
+              </div>
+              {runError && (
+                <p className="text-[12px] text-status-danger font-mono">{runError}</p>
+              )}
+              {ap.showManualButtonAsPrimary ? (
+                <button
+                  onClick={analyze}
+                  disabled={running}
+                  className="inline-flex h-10 items-center gap-2 rounded-lg bg-accent px-4 font-mono text-sm font-medium text-white transition-colors hover:bg-accent-hover disabled:opacity-50"
+                >
+                  {running ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" /> Analyzing case…
+                    </>
+                  ) : (
+                    <>
+                      <Activity className="w-4 h-4" /> Analyze Case
+                    </>
+                  )}
+                </button>
+              ) : (
+                <button
+                  onClick={analyze}
+                  disabled={running}
+                  className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border bg-surface-subtle text-[12px] font-mono text-fg-secondary hover:text-fg hover:bg-surface-elevated transition-colors disabled:opacity-50"
+                >
+                  {running ? (
+                    <>
+                      <Loader2 className="w-3 h-3 animate-spin" /> Analyzing…
+                    </>
+                  ) : (
+                    <>
+                      <Activity className="w-3 h-3" /> Analyze now instead of waiting
+                    </>
+                  )}
+                </button>
+              )}
+            </div>
+          );
+        })()}
       </div>
     );
   }
@@ -1190,7 +1255,10 @@ export function IntelligencePanel({ caseId, caseNumber }: Props) {
       <ActionSection env={env} caseId={caseId} />
 
       {/* COMMUNICATIONS (Phase 5) */}
-      <CommunicationsSection caseId={caseId} />
+      <CommunicationsSection
+        caseId={caseId}
+        automaticCommunicationsEnabled={!!env.automatic_communications_enabled}
+      />
 
       {/* CASE TIMELINE — real audit trail, oldest first */}
       <CaseAuditTimeline caseId={env.case_id} />

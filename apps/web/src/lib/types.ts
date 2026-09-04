@@ -229,6 +229,8 @@ export interface IntelligenceEnvelope {
   case_number: string;
   analyzed: boolean;
   intelligence_enabled: boolean;
+  automatic_action_execution_enabled?: boolean;
+  automatic_communications_enabled?: boolean;
   status: string;
   provider?: string | null;
   provider_version?: string | null;

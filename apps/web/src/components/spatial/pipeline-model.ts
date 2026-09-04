@@ -304,6 +304,95 @@ export function deriveCasePipeline(
 }
 
 /* ------------------------------------------------------------------ */
+/* Automation-aware presentation (Analyze / Execute primary-action UI) */
+/* ------------------------------------------------------------------ */
+
+export type AnalysisPresentation = {
+  mode: "automatic_pending" | "manual_required";
+  headline: string;
+  detail: string;
+  /** false = the manual button should be demoted to a small fallback
+   *  control rather than presented as the primary call to action. */
+  showManualButtonAsPrimary: boolean;
+};
+
+/**
+ * Decides how to present the "not analyzed yet" state — called only when
+ * env.analyzed is false (a separate, unrelated FAILED-status branch is
+ * handled by the caller). Pure function so this decision is unit-testable
+ * without a component-testing framework (none is set up in this project).
+ */
+export function deriveAnalysisPresentation(
+  intelligenceEnabled: boolean
+): AnalysisPresentation {
+  if (intelligenceEnabled) {
+    return {
+      mode: "automatic_pending",
+      headline: "AUTOMATIC ANALYSIS IN PROGRESS",
+      detail:
+        "Intelligence runs automatically for this case shortly after the payment failure is received. If this doesn't update in a few seconds, you can run it manually.",
+      showManualButtonAsPrimary: false,
+    };
+  }
+  return {
+    mode: "manual_required",
+    headline: "INTELLIGENCE NOT RUN",
+    detail: "Automatic analysis is disabled — run it manually below.",
+    showManualButtonAsPrimary: true,
+  };
+}
+
+export type ExecutePresentation = {
+  mode: "automatic_active" | "automatic_skipped_low_opportunity" | "manual_required";
+  headline: string;
+  detail: string;
+  showManualButtonAsPrimary: boolean;
+};
+
+/**
+ * Decides how to present the "policy APPROVED, no RecoveryAction yet" state
+ * — called only when a strategy is eligible and policy verdict is APPROVED
+ * (NEEDS_APPROVAL/REJECTED/ineligible-strategy are handled separately by the
+ * caller and are unaffected by automation flags).
+ *
+ * The LOW-opportunity case mirrors apps/api/services/intelligence/
+ * orchestrator.py's own "Recovery Opportunity gate" exactly (prediction.band
+ * == "LOW" -> automatic execution is deliberately skipped even though Policy
+ * approved it) — without this, an automation-enabled LOW-band case would
+ * misleadingly claim "being executed automatically" when nothing was ever
+ * attempted, and a human would have no reason to look at it.
+ */
+export function deriveExecutePresentation(
+  automaticActionExecutionEnabled: boolean,
+  predictionBand: string | null | undefined
+): ExecutePresentation {
+  if (automaticActionExecutionEnabled) {
+    if (predictionBand === "LOW") {
+      return {
+        mode: "automatic_skipped_low_opportunity",
+        headline: "AUTOMATIC EXECUTION SKIPPED — LOW OPPORTUNITY",
+        detail:
+          "Policy approved this recovery, but automatic execution does not pursue LOW recovery-probability cases. A human may still execute it manually as an explicit override.",
+        showManualButtonAsPrimary: true,
+      };
+    }
+    return {
+      mode: "automatic_active",
+      headline: "AUTOMATIC EXECUTION ENABLED",
+      detail:
+        "Policy approved this recovery — the Action Engine executes it automatically. This page updates as soon as execution completes.",
+      showManualButtonAsPrimary: false,
+    };
+  }
+  return {
+    mode: "manual_required",
+    headline: "READY FOR MANUAL EXECUTION",
+    detail: "Automatic execution is disabled — a human must trigger this recovery.",
+    showManualButtonAsPrimary: true,
+  };
+}
+
+/* ------------------------------------------------------------------ */
 /* System pipeline (Command Center) — aggregate, real counts only      */
 /* ------------------------------------------------------------------ */
 
