@@ -364,6 +364,40 @@ def test_sms_transport_error_normalized(monkeypatch):
     assert result.error_code == "TRANSPORT_ERROR"
 
 
+def test_sms_timeout_error_normalized(monkeypatch):
+    """Regression: a slow/unreachable Brevo SMS endpoint must fail fast with
+    TRANSPORT_ERROR, never hang the caller — same contract as email's
+    test_email_timeout_error_normalized."""
+    _brevo_env(monkeypatch)
+
+    class _TimingOutClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def post(self, *a, **k):
+            raise httpx.TimeoutException("slow")
+
+    monkeypatch.setattr("services.communications.providers.httpx.Client", lambda *a, **k: _TimingOutClient())
+    result = BrevoSmsProvider().send(to="+919876543210", subject="", body="hi")
+    assert result.ok is False
+    assert result.error_code == "TRANSPORT_ERROR"
+
+
+def test_sms_key_never_in_url_only_header(monkeypatch):
+    """Same secrecy contract as BrevoEmailProvider: the key goes in a header,
+    never the URL, and is never echoed into the result."""
+    _brevo_env(monkeypatch)
+    monkeypatch.setattr(settings, "BREVO_API_KEY", "SECRET-KEY-DO-NOT-LEAK")
+    fake = _patch_client(monkeypatch, [_Resp(201, {"messageId": 999})])
+    result = BrevoSmsProvider().send(to="+919876543210", subject="", body="hi")
+    assert "SECRET-KEY-DO-NOT-LEAK" not in fake.calls[0]["url"]
+    assert fake.calls[0]["headers"]["api-key"] == "SECRET-KEY-DO-NOT-LEAK"
+    assert "SECRET-KEY-DO-NOT-LEAK" not in str(result)
+
+
 # ===========================================================================
 # BrevoWhatsAppProvider — unit tests (mocked httpx)
 # ===========================================================================
