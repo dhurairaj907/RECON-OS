@@ -284,6 +284,120 @@ def test_password_reset_sends_real_email_when_configured(unauthenticated_client,
     assert "reset-password?token=" in captured["json"]["textContent"]
 
 
+def test_forgot_password_reset_link_uses_frontend_base_url(unauthenticated_client, monkeypatch):
+    """The reset link embedded in the email must be built from
+    FRONTEND_BASE_URL (https://recon-os-els.pages.dev in production), with
+    trailing-slash normalization so the link is never malformed."""
+    c = unauthenticated_client
+    c.post("/api/v1/auth/register", json={
+        "email": "linkcheck@recon.test", "password": "Password123!", "organization_name": "LinkCheckOrg",
+    })
+    monkeypatch.setattr(settings, "RECON_COMMUNICATIONS_MODE", "real")
+    monkeypatch.setattr(settings, "BREVO_API_KEY", "test-brevo-key")
+    monkeypatch.setattr(settings, "SMTP_FROM_EMAIL", "no-reply@recon.test")
+    # Deliberately WITH a trailing slash — rstrip('/') in auth.py must
+    # normalize this, never producing a double slash before /reset-password.
+    monkeypatch.setattr(settings, "FRONTEND_BASE_URL", "https://recon-os-els.pages.dev/")
+
+    captured = {}
+
+    class _Resp:
+        status_code = 201
+        def json(self):
+            return {"messageId": "<link-test@smtp-relay.brevo.com>"}
+
+    class _FakeHttpxClient:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def post(self, url, json=None, headers=None, **k):
+            captured["json"] = json
+            return _Resp()
+
+    monkeypatch.setattr("services.communications.providers.httpx.Client", lambda *a, **k: _FakeHttpxClient())
+
+    res = c.post("/api/v1/auth/forgot-password", json={"email": "linkcheck@recon.test"})
+    assert res.status_code == 200
+    body = captured["json"]["textContent"]
+    assert "https://recon-os-els.pages.dev/reset-password?token=" in body
+    assert "pages.dev//reset-password" not in body   # no double slash
+
+
+def test_forgot_password_email_provider_failure_still_returns_200(unauthenticated_client, monkeypatch, db_session):
+    """A provider rejection (e.g. Brevo 500) must never surface to the
+    caller — anti-enumeration requires the same generic 200 regardless of
+    whether delivery actually succeeded. The failure must still be visible
+    server-side via the audit trail (see routers/auth.py)."""
+    c = unauthenticated_client
+    c.post("/api/v1/auth/register", json={
+        "email": "providerfail@recon.test", "password": "Password123!", "organization_name": "ProviderFailOrg",
+    })
+    monkeypatch.setattr(settings, "RECON_COMMUNICATIONS_MODE", "real")
+    monkeypatch.setattr(settings, "BREVO_API_KEY", "test-brevo-key")
+    monkeypatch.setattr(settings, "SMTP_FROM_EMAIL", "no-reply@recon.test")
+
+    class _Resp:
+        status_code = 500
+        def json(self):
+            return {}
+
+    class _FakeHttpxClient:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def post(self, *a, **k): return _Resp()
+
+    monkeypatch.setattr("services.communications.providers.httpx.Client", lambda *a, **k: _FakeHttpxClient())
+
+    import time
+    started = time.monotonic()
+    res = c.post("/api/v1/auth/forgot-password", json={"email": "providerfail@recon.test"})
+    elapsed = time.monotonic() - started
+
+    assert res.status_code == 200
+    assert res.json()["message"] == "If that email exists, a password reset link has been sent."
+    assert elapsed < 5  # a provider rejection must resolve promptly, never hang
+
+    audit = (
+        db_session.query(AuditLog)
+        .filter(AuditLog.action == "PASSWORD_RESET_EMAIL_FAILED")
+        .order_by(AuditLog.id.desc())
+        .first()
+    )
+    assert audit is not None
+    assert "providerfail@recon.test" in audit.detail
+    assert audit.metadata_json["provider"] == "BREVO_EMAIL"
+
+
+def test_forgot_password_email_provider_timeout_does_not_hang_request(unauthenticated_client, monkeypatch):
+    """Root-cause regression: the currently-DEPLOYED SmtpEmailProvider path
+    can leave a forgot-password request pending far longer than its own
+    socket timeout when the underlying transport hangs (e.g. Render's
+    free-tier network handling of outbound SMTP). This proves the REST-based
+    BrevoEmailProvider path bounds the request to its own httpx timeout
+    instead — a provider-level timeout must never make the endpoint hang."""
+    c = unauthenticated_client
+    c.post("/api/v1/auth/register", json={
+        "email": "providertimeout@recon.test", "password": "Password123!", "organization_name": "ProviderTimeoutOrg",
+    })
+    monkeypatch.setattr(settings, "RECON_COMMUNICATIONS_MODE", "real")
+    monkeypatch.setattr(settings, "BREVO_API_KEY", "test-brevo-key")
+    monkeypatch.setattr(settings, "SMTP_FROM_EMAIL", "no-reply@recon.test")
+
+    class _TimingOutClient:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def post(self, *a, **k): raise httpx.TimeoutException("simulated hang")
+
+    monkeypatch.setattr("services.communications.providers.httpx.Client", lambda *a, **k: _TimingOutClient())
+
+    import time
+    started = time.monotonic()
+    res = c.post("/api/v1/auth/forgot-password", json={"email": "providertimeout@recon.test"})
+    elapsed = time.monotonic() - started
+
+    assert res.status_code == 200
+    assert elapsed < 5  # never hangs — the provider's own timeout handling returns promptly
+
+
 def test_password_reset_never_logs_plaintext_token_in_real_mode(unauthenticated_client, monkeypatch, caplog):
     import logging
     c = unauthenticated_client

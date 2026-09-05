@@ -291,3 +291,57 @@ def test_reset_password_rejects_reused_token(unauthenticated_client, db_session)
         "token": raw_token, "new_password": "SecondNewPassword123!",
     })
     assert second.status_code == 400
+
+
+def test_reset_password_rejects_expired_token(unauthenticated_client, db_session):
+    unauthenticated_client.post("/api/v1/auth/register", json={
+        "email": "expiredtoken@recon.test", "password": "Password123!", "organization_name": "ExpiredTokenOrg",
+    })
+    user = db_session.query(User).filter(User.email == "expiredtoken@recon.test").first()
+    from auth import generate_token, hash_token
+    raw_token = generate_token()
+    db_session.add(PasswordResetToken(
+        user_id=user.id, token_hash=hash_token(raw_token),
+        expires_at=datetime.now(timezone.utc) - timedelta(minutes=1),   # already expired
+    ))
+    db_session.commit()
+
+    res = unauthenticated_client.post("/api/v1/auth/reset-password", json={
+        "token": raw_token, "new_password": "WontWork123!",
+    })
+    assert res.status_code == 400
+    assert "expired" in res.json()["detail"].lower() or "invalid" in res.json()["detail"].lower()
+
+    # The password must be genuinely unchanged.
+    unauthenticated_client.cookies.clear()
+    login = unauthenticated_client.post("/api/v1/auth/login", json={
+        "email": "expiredtoken@recon.test", "password": "Password123!",
+    })
+    assert login.status_code == 200
+
+
+def test_forgot_password_persists_token_with_correct_expiry(unauthenticated_client, db_session):
+    """forgot-password must create a REAL PasswordResetToken row (hash only,
+    never the raw token) with an expiry matching
+    PASSWORD_RESET_TOKEN_EXPIRY_MINUTES — this is the row reset-password
+    later consumes, independent of whether email delivery itself succeeds."""
+    unauthenticated_client.post("/api/v1/auth/register", json={
+        "email": "tokenpersist@recon.test", "password": "Password123!", "organization_name": "TokenPersistOrg",
+    })
+    user = db_session.query(User).filter(User.email == "tokenpersist@recon.test").first()
+
+    before = datetime.now(timezone.utc)
+    res = unauthenticated_client.post("/api/v1/auth/forgot-password", json={"email": "tokenpersist@recon.test"})
+    assert res.status_code == 200
+
+    row = (
+        db_session.query(PasswordResetToken)
+        .filter(PasswordResetToken.user_id == user.id)
+        .order_by(PasswordResetToken.id.desc())
+        .first()
+    )
+    assert row is not None
+    assert row.used_at is None
+    expires_at = row.expires_at if row.expires_at.tzinfo else row.expires_at.replace(tzinfo=timezone.utc)
+    expected = before + timedelta(minutes=settings.PASSWORD_RESET_TOKEN_EXPIRY_MINUTES)
+    assert abs((expires_at - expected).total_seconds()) < 5
