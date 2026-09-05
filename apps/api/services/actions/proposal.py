@@ -72,12 +72,32 @@ def build_proposal(db: Session, case: RecoveryCase) -> ActionProposal:
         )
 
     if strategy_action not in PAYMENT_LINK_ELIGIBLE_STRATEGIES:
+        # Checked BEFORE the policy-verdict check below so existing behavior
+        # (e.g. a RISK_BLOCK case, whose strategy is never payment-link
+        # eligible in the first place) keeps reporting the same
+        # STRATEGY_NOT_ELIGIBLE reason it always has — never weakened.
         return ActionProposal(
             proposable=False, strategy_action=strategy_action, policy_verdict=policy_verdict,
             reason=(f"Strategy '{strategy_action or 'NONE'}' has no executable Phase 3 action. "
                     "Phase 3 implements CREATE_PAYMENT_LINK only "
                     "(for RETRY_NOW / RETRY_DELAYED / SEND_PAYMENT_LINK intents)."),
             not_proposable_reason="STRATEGY_NOT_ELIGIBLE", **base,
+        )
+
+    if policy_verdict == "REJECTED":
+        # Advisory signal only — execute_action() independently re-derives and
+        # re-evaluates policy (including intent) before anything can actually
+        # run, and is the true authoritative gate. This check exists so the
+        # proposal itself never claims proposable=True for a case whose
+        # strategy IS payment-link eligible but the last analysis pass still
+        # rejected it (e.g. Phase 10 LIKELY_UNWILLING intent on an otherwise
+        # ordinary-looking SEND_PAYMENT_LINK case), rather than relying
+        # solely on the frontend to hide the action.
+        return ActionProposal(
+            proposable=False, strategy_action=strategy_action, policy_verdict=policy_verdict,
+            reason="Latest policy evaluation is REJECTED — this case is not eligible "
+                   "for a payment-link recovery action.",
+            not_proposable_reason="POLICY_REJECTED", **base,
         )
 
     return ActionProposal(

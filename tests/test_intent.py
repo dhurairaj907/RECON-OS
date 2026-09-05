@@ -33,9 +33,13 @@ from schemas.intelligence import (
     StrategyAction,
     StrategyResult,
 )
+from services.actions.common import PAYMENT_LINK_ELIGIBLE_STRATEGIES, to_paise
+from services.actions.executor import execute_action
+from services.actions.proposal import build_proposal, get_or_create_action
 from services.event_processor import process_inbound_event
 from services.intelligence import ai_intent as aii
 from services.intelligence import intent as intent_mod
+from services.intelligence.orchestrator import run_intelligence
 from services.intelligence.policy_engine import evaluate_policy
 from services.intelligence.weights import amount_band
 
@@ -44,6 +48,7 @@ from test_actions import (  # noqa: F401 — reused fixtures + helpers
     webhook_env,
     upi_timeout_payload,
     _api_analyzed_case,
+    _make_case,
 )
 
 
@@ -466,3 +471,276 @@ def test_full_regression_risk_block_precedent_intent_field_present(
     assert intent["evaluated"] is True
     assert intent["intent"]["classification"] == "LIKELY_UNWILLING"
     assert client.get(f"/api/v1/recovery-cases/{cn}/actions").json()["items"] == []
+
+
+# ===========================================================================
+# CRITICAL FIX B1 regression — intent enforced at the AUTHORITATIVE
+# execution gate (execute_action), not just the advisory intelligence pass.
+#
+# Every test below FORCES a RecoveryAction row into existence directly via
+# the ORM (bypassing the propose endpoint / get_or_create_action) to prove
+# execute_action() itself — the one function that actually calls Razorpay —
+# independently recomputes intent and blocks on it, rather than relying on
+# the proposal-time check to have kept a bad action from ever existing. A
+# forged/stale `policy_verdict="APPROVED"` is deliberately set on the forced
+# action to prove execute_action() never trusts a stored verdict.
+# ===========================================================================
+def _latest_ci(db, case_id):
+    return (
+        db.query(CaseIntelligence)
+        .filter(CaseIntelligence.recovery_case_id == case_id)
+        .order_by(CaseIntelligence.version.desc())
+        .first()
+    )
+
+
+def _force_action(db, case, *, tag: str) -> RecoveryAction:
+    """A RecoveryAction as if already proposed/approved earlier — never
+    trusted by execute_action(), which must re-derive everything fresh."""
+    amount = case.amount_at_risk
+    action = RecoveryAction(
+        recovery_case_id=case.id,
+        merchant_id=case.merchant_id,
+        action_type="CREATE_PAYMENT_LINK",
+        action_version=1,
+        status="PROPOSED",
+        outcome="PENDING",
+        idempotency_key=f"forced-{tag}-{case.id}",
+        reference_id=f"RC-FORCED-{tag}-{case.id}",
+        strategy_action="SEND_PAYMENT_LINK",
+        policy_verdict="APPROVED",  # forged/stale — execute_action must not trust this
+        amount=amount,
+        amount_paise=to_paise(amount),
+        currency=case.currency or "INR",
+        provider="RAZORPAY",
+    )
+    db.add(action)
+    db.commit()
+    db.refresh(action)
+    return action
+
+
+def _make_prior_expired_link(db, case) -> None:
+    amount = case.amount_at_risk
+    prior = RecoveryAction(
+        recovery_case_id=case.id,
+        merchant_id=case.merchant_id,
+        action_type="CREATE_PAYMENT_LINK",
+        action_version=1,
+        status="EXECUTED",
+        outcome="EXPIRED",
+        idempotency_key=f"prior-expired-{case.id}",
+        reference_id=f"RC-PRIOR-EXPIRED-{case.id}",
+        strategy_action="SEND_PAYMENT_LINK",
+        policy_verdict="APPROVED",
+        amount=amount,
+        amount_paise=to_paise(amount),
+        currency=case.currency or "INR",
+        provider="RAZORPAY",
+        provider_action_id=f"plink_prior_{case.id}",
+    )
+    db.add(prior)
+    db.commit()
+
+
+# ---------------------------------------------------------------------------
+# A. Direct API execution cannot bypass intent rejection (opted-out customer)
+# ---------------------------------------------------------------------------
+def test_api_direct_execution_cannot_bypass_intent_rejection(client, db_session, razorpay_env):
+    cn = _api_analyzed_case(
+        client, customer_email="unwilling-api@example.com", customer_phone="+919876500011",
+    )
+    case = db_session.query(RecoveryCase).filter_by(case_number=cn).first()
+    customer = db_session.query(Customer).filter_by(id=case.customer_id).first()
+    assert customer is not None
+    customer.opted_out_channels = "EMAIL,SMS"
+    db_session.commit()
+
+    # Re-analyze via the real API so CaseIntelligence reflects the opt-out.
+    analyze = client.post(f"/api/v1/recovery-cases/{cn}/intelligence:analyze")
+    assert analyze.status_code == 200, analyze.text
+
+    ci = _latest_ci(db_session, case.id)
+    assert ci.intent_classification == "LIKELY_UNWILLING"
+    assert ci.policy_verdict == "REJECTED"
+
+    # The propose endpoint itself must now refuse (build_proposal fix, item D).
+    propose_resp = client.post(f"/api/v1/recovery-cases/{cn}/actions/propose")
+    assert propose_resp.status_code == 200, propose_resp.text
+    body = propose_resp.json()
+    assert body["action"] is None
+    assert body["proposal"]["proposable"] is False
+    assert body["proposal"]["not_proposable_reason"] == "POLICY_REJECTED"
+
+    # Force an action into existence directly (as if it had been proposed
+    # BEFORE the opt-out was recorded) and hit the real execute endpoint —
+    # the authoritative gate must still block it, independent of proposal.
+    db_session.refresh(case)
+    action = _force_action(db_session, case, tag="apiA")
+
+    exec_resp = client.post(f"/api/v1/actions/{action.id}/execute")
+    assert exec_resp.status_code == 200, exec_resp.text
+    exec_body = exec_resp.json()
+    assert exec_body["ok"] is False
+    assert exec_body["action"]["status"] == "BLOCKED"
+    assert exec_body["action"]["blocked_reason"] == "POLICY_REJECTED"
+    assert exec_body["action"]["provider_action_id"] is None
+
+    assert razorpay_env["calls"] == [], \
+        "no Razorpay payment-link call must ever be made for a LIKELY_UNWILLING customer"
+
+
+# ---------------------------------------------------------------------------
+# B. Opted-out customer — service-level execute_action() proof
+# ---------------------------------------------------------------------------
+def test_execute_action_blocked_for_opted_out_customer(db_session, razorpay_env):
+    payload = upi_timeout_payload(pid="pay_unwilling_optout", eid="evt_unwilling_optout")
+    payload["payload"]["payment"]["entity"]["email"] = "unwilling-optout@example.com"
+    case = _make_case(db_session, payload)
+    customer = db_session.query(Customer).filter_by(id=case.customer_id).first()
+    assert customer is not None
+    customer.opted_out_channels = "EMAIL"
+    db_session.commit()
+
+    run_intelligence(db_session, case.id, trigger="test")
+    db_session.refresh(case)
+    ci = _latest_ci(db_session, case.id)
+    assert ci.intent_classification == "LIKELY_UNWILLING"
+    assert ci.policy_verdict == "REJECTED"
+
+    proposal = build_proposal(db_session, case)
+    assert proposal.proposable is False
+    assert proposal.not_proposable_reason == "POLICY_REJECTED"
+
+    action = _force_action(db_session, case, tag="optout")
+    result = execute_action(db_session, action.id)
+
+    assert result.status == "BLOCKED"
+    assert result.blocked_reason == "POLICY_REJECTED"
+    assert result.outcome != "RECOVERED"
+    assert result.provider_action_id is None
+    assert razorpay_env["calls"] == []
+
+
+# ---------------------------------------------------------------------------
+# C. Repeated expired/cancelled links — service-level execute_action() proof
+# ---------------------------------------------------------------------------
+def test_execute_action_blocked_for_repeated_expired_links(db_session, razorpay_env):
+    shared_email = "repeat-expired-exec@example.com"
+    for i in range(2):
+        prior_payload = upi_timeout_payload(pid=f"pay_prior_exec_{i}", eid=f"evt_prior_exec_{i}")
+        prior_payload["payload"]["payment"]["entity"]["email"] = shared_email
+        prior_payload["payload"]["payment"]["entity"]["customer_id"] = None
+        prior_case = _make_case(db_session, prior_payload)
+        _make_prior_expired_link(db_session, prior_case)
+
+    payload = upi_timeout_payload(pid="pay_current_exec", eid="evt_current_exec")
+    payload["payload"]["payment"]["entity"]["email"] = shared_email
+    payload["payload"]["payment"]["entity"]["customer_id"] = None
+    case = _make_case(db_session, payload)
+
+    run_intelligence(db_session, case.id, trigger="test")
+    db_session.refresh(case)
+    ci = _latest_ci(db_session, case.id)
+    assert ci.intent_classification == "LIKELY_UNWILLING"
+    assert ci.policy_verdict == "REJECTED"
+
+    action = _force_action(db_session, case, tag="expiredlinks")
+    result = execute_action(db_session, action.id)
+
+    assert result.status == "BLOCKED"
+    assert result.blocked_reason == "POLICY_REJECTED"
+    assert result.outcome != "RECOVERED"
+    assert result.provider_action_id is None
+    assert razorpay_env["calls"] == []
+
+
+# ---------------------------------------------------------------------------
+# D. build_proposal() refuses when the latest policy verdict is REJECTED
+# ---------------------------------------------------------------------------
+def test_build_proposal_refuses_when_policy_verdict_rejected(db_session):
+    """Uses an opted-out customer (strategy IS payment-link eligible, but
+    intent evaluation makes policy REJECT it) rather than RISK_BLOCK — RISK_BLOCK's
+    strategy is never payment-link eligible in the first place, so it already
+    (and still) reports STRATEGY_NOT_ELIGIBLE, checked first; this test
+    targets the specific new case: an otherwise-eligible strategy blocked by
+    the REJECTED verdict itself."""
+    payload = upi_timeout_payload(pid="pay_proposal_rejected", eid="evt_proposal_rejected")
+    payload["payload"]["payment"]["entity"]["email"] = "proposal-rejected@example.com"
+    case = _make_case(db_session, payload)
+    customer = db_session.query(Customer).filter_by(id=case.customer_id).first()
+    assert customer is not None
+    customer.opted_out_channels = "EMAIL"
+    db_session.commit()
+
+    run_intelligence(db_session, case.id, trigger="test")
+    db_session.refresh(case)
+
+    ci = _latest_ci(db_session, case.id)
+    assert ci.intent_classification == "LIKELY_UNWILLING"
+    assert ci.policy_verdict == "REJECTED"
+    assert ci.recommended_action in PAYMENT_LINK_ELIGIBLE_STRATEGIES, \
+        "this test targets a strategy-eligible-but-policy-rejected case"
+
+    proposal = build_proposal(db_session, case)
+    assert proposal.proposable is False
+    assert proposal.not_proposable_reason == "POLICY_REJECTED"
+
+    # get_or_create_action must not create a row either.
+    action, proposal2 = get_or_create_action(db_session, case)
+    assert action is None
+    assert proposal2.proposable is False
+
+
+# ---------------------------------------------------------------------------
+# E. RISK_BLOCK behavior is preserved after threading intent through execute_action()
+# ---------------------------------------------------------------------------
+def test_execute_action_still_blocks_risk_block_after_intent_fix(db_session, razorpay_env):
+    """A RISK_BLOCK case's strategy was never payment-link eligible to begin
+    with, so it is (and must remain) blocked at the pre-existing
+    STRATEGY_NOT_ELIGIBLE gate — checked before policy re-evaluation — never
+    reaching Razorpay either way. This proves threading intent through
+    execute_action() did not change this pre-existing outcome."""
+    payload = upi_timeout_payload(pid="pay_riskblock_exec", eid="evt_riskblock_exec")
+    payload["payload"]["payment"]["entity"]["error_reason"] = "payment_risk_check_failed"
+    payload["payload"]["payment"]["entity"]["error_description"] = "risk engine blocked transaction"
+    case = _make_case(db_session, payload)
+    run_intelligence(db_session, case.id, trigger="test")
+    db_session.refresh(case)
+
+    ci = _latest_ci(db_session, case.id)
+    assert ci.failure_category == "RISK_BLOCK"
+    assert ci.policy_verdict == "REJECTED"
+    assert ci.recommended_action not in PAYMENT_LINK_ELIGIBLE_STRATEGIES
+
+    action = _force_action(db_session, case, tag="riskblock")
+    result = execute_action(db_session, action.id)
+
+    assert result.status == "BLOCKED"
+    assert result.blocked_reason == "STRATEGY_NOT_ELIGIBLE"
+    assert result.provider_action_id is None
+    assert razorpay_env["calls"] == []
+
+
+# ---------------------------------------------------------------------------
+# F. APPROVED automatic execution behavior is preserved (happy path)
+# ---------------------------------------------------------------------------
+def test_execute_action_still_succeeds_for_approved_recoverable_case(db_session, razorpay_env):
+    payload = upi_timeout_payload(pid="pay_recoverable_exec", eid="evt_recoverable_exec")
+    case = _make_case(db_session, payload)
+    run_intelligence(db_session, case.id, trigger="test")
+    db_session.refresh(case)
+
+    ci = _latest_ci(db_session, case.id)
+    assert ci.policy_verdict == "APPROVED"
+    assert ci.intent_classification in ("RECOVERABLE", "AMBIGUOUS", "INSUFFICIENT_EVIDENCE", None)
+    assert ci.intent_classification != "LIKELY_UNWILLING"
+
+    action, proposal = get_or_create_action(db_session, case)
+    assert action is not None, f"not proposable: {proposal.not_proposable_reason}"
+
+    result = execute_action(db_session, action.id)
+    assert result.status == "EXECUTED"
+    assert result.outcome == "PENDING"
+    assert result.provider_action_id is not None
+    assert len(razorpay_env["calls"]) == 1

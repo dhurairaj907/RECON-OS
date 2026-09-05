@@ -18,6 +18,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 from sqlalchemy import select, func
+from sqlalchemy.exc import IntegrityError
 
 from models.merchant import Merchant
 from models.customer import Customer
@@ -47,6 +48,46 @@ def generate_case_number(db: Session) -> str:
     """Generates an incremental unique case reference e.g., RC-10001."""
     count = db.query(func.count(RecoveryCase.id)).scalar() or 0
     return f"RC-{10000 + count + 1}"
+
+
+def _record_duplicate_event(
+    db: Session, *, event_id: str, event_type: str, merchant_id: UUID, source: str,
+    razorpay_payment_id: Optional[str], race_detected: bool = False,
+) -> tuple[Optional[RevenueEvent], Optional[RecoveryCase]]:
+    """
+    Shared idempotent-duplicate handling for BOTH the ordinary pre-check
+    (another request already fully committed this event earlier) and a
+    genuine concurrent-insert race (two requests for the same never-before-
+    seen event id passed the pre-check at the same time; the DB's unique
+    constraint on razorpay_event_id let exactly one INSERT through). Either
+    way: never reprocess, never create a second RecoveryCase/RecoveryAction,
+    and return the SAME existing event/case a normal duplicate lookup would.
+    """
+    logger.info(
+        "%s event detected: %s. Skipping re-processing.",
+        "Concurrent duplicate" if race_detected else "Duplicate", event_id,
+    )
+    audit = AuditLog(
+        merchant_id=merchant_id,
+        actor=source.upper(),
+        action="DUPLICATE_EVENT_IGNORED",
+        detail=(
+            f"Ignored {'concurrent duplicate' if race_detected else 'duplicate'} "
+            f"event {event_id} ({event_type})"
+            + (" — race detected at insert time" if race_detected else "")
+        ),
+        metadata_json={"event_id": event_id, "event_type": event_type, "race_detected": race_detected},
+    )
+    db.add(audit)
+    db.commit()
+
+    existing_event = db.query(RevenueEvent).filter_by(razorpay_event_id=event_id).first()
+    existing_case = None
+    if razorpay_payment_id:
+        payment = db.query(Payment).filter_by(razorpay_payment_id=razorpay_payment_id).first()
+        if payment:
+            existing_case = db.query(RecoveryCase).filter_by(payment_id=payment.id).first()
+    return existing_event, existing_case
 
 
 def process_inbound_event(
@@ -86,27 +127,17 @@ def process_inbound_event(
     # 2. Check for duplicate event (Idempotency)
     existing_event = db.query(RevenueEvent).filter_by(razorpay_event_id=event_id).first()
     if existing_event:
-        logger.info(f"Duplicate event detected: {event_id}. Skipping re-processing.")
-        # Log duplicate attempt for audit
-        audit = AuditLog(
-            merchant_id=merchant_id,
-            actor=source.upper(),
-            action="DUPLICATE_EVENT_IGNORED",
-            detail=f"Ignored duplicate event {event_id} ({event_type})",
-            metadata_json={"event_id": event_id, "event_type": event_type}
+        return _record_duplicate_event(
+            db, event_id=event_id, event_type=event_type, merchant_id=merchant_id,
+            source=source, razorpay_payment_id=normalized.get("razorpay_payment_id"),
         )
-        db.add(audit)
-        db.commit()
 
-        # Find existing case if any
-        existing_case = None
-        if normalized.get("razorpay_payment_id"):
-            payment = db.query(Payment).filter_by(razorpay_payment_id=normalized["razorpay_payment_id"]).first()
-            if payment:
-                existing_case = db.query(RecoveryCase).filter_by(payment_id=payment.id).first()
-        return existing_event, existing_case
-
-    # 3. Persist the RevenueEvent immediately
+    # 3. Persist the RevenueEvent immediately. The pre-check above is not
+    # atomic with this insert — two genuinely concurrent requests for the
+    # same never-before-seen event id can both pass it. The DB-level unique
+    # constraint on razorpay_event_id (models/revenue_event.py) is the real
+    # guard: only one INSERT can win, and the loser's flush() raises
+    # IntegrityError here rather than silently creating a duplicate row.
     revenue_event = RevenueEvent(
         razorpay_event_id=event_id,
         merchant_id=merchant_id,
@@ -120,7 +151,19 @@ def process_inbound_event(
         signature_verified=signature_verified,
     )
     db.add(revenue_event)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError:
+        # Lost the race: another concurrent request for this exact event id
+        # committed first. Roll back this failed insert and treat it exactly
+        # like an ordinary duplicate — never reprocess, never create a second
+        # RecoveryCase/RecoveryAction for the same event.
+        db.rollback()
+        return _record_duplicate_event(
+            db, event_id=event_id, event_type=event_type, merchant_id=merchant_id,
+            source=source, razorpay_payment_id=normalized.get("razorpay_payment_id"),
+            race_detected=True,
+        )
 
     recovery_case = None
     case_was_created = False

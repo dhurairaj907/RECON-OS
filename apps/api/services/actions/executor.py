@@ -6,8 +6,9 @@ execute_action(db, action_id):
       -> idempotency: already executed? return existing (NO second Razorpay call)
       -> load recovery case
       -> rebuild CaseContext  (server-side, fresh)
-      -> re-run diagnosis / prediction / strategy
-      -> RE-EVALUATE the deterministic Policy Engine  (canonical SEND_PAYMENT_LINK gate)
+      -> re-run diagnosis / prediction / strategy / intent
+      -> RE-EVALUATE the deterministic Policy Engine  (canonical SEND_PAYMENT_LINK gate,
+         WITH the freshly recomputed intent — never the stored CaseIntelligence value)
       -> verify verdict == APPROVED   (NEEDS_APPROVAL / REJECTED -> BLOCKED, no execution)
       -> validate amount / currency
       -> verify Razorpay configured + TEST MODE + test key
@@ -17,8 +18,13 @@ execute_action(db, action_id):
       -> write full audit trail
       -> return RecoveryAction
 
-Never trusts a stored verdict, a frontend value, or an AI value. Everything is
-re-derived here.
+Never trusts a stored verdict, a frontend value, an AI value, or a stored
+intent classification. Everything — including intent — is re-derived here,
+fresh, from current canonical case data, exactly as diagnosis/prediction/
+strategy already are. This closes the gap where a LIKELY_UNWILLING /
+INSUFFICIENT_EVIDENCE customer (per Phase 10 intent evaluation) could
+otherwise be recovered via direct API execution even though the intelligence
+pipeline's own advisory pass had already computed REJECTED.
 """
 
 from __future__ import annotations
@@ -42,6 +48,7 @@ from services.actions.common import (
     ui_state,
 )
 from services.intelligence.ai_diagnosis import diagnose_case
+from services.intelligence.ai_intent import evaluate_intent_case
 from services.intelligence.context_builder import build_case_context
 from services.intelligence.policy_engine import evaluate_policy
 from services.intelligence.prediction import predict
@@ -106,6 +113,14 @@ def execute_action(db: Session, action_id) -> RecoveryAction:
     diagnosis, _ = diagnose_case(ctx)
     prediction = predict(ctx, diagnosis)
     strategy = recommend_strategy(ctx, diagnosis, prediction)
+    # Intent is re-derived fresh here too — never taken from the stored
+    # CaseIntelligence row a prior analysis pass computed, and never from the
+    # frontend. This is the fix for the audit's CRITICAL finding B1: without
+    # this, a LIKELY_UNWILLING / INSUFFICIENT_EVIDENCE customer's REJECTED
+    # verdict from the advisory intelligence pass could be silently dropped
+    # at the one place that actually calls Razorpay, because evaluate_policy()
+    # defaults intent=None (rules pass trivially) when it isn't passed.
+    intent, _ = evaluate_intent_case(ctx, diagnosis, prediction)
 
     if (case.status or "").upper() in TERMINAL_CASE_STATUSES:
         return _block(db, action, "CASE_NOT_ELIGIBLE",
@@ -118,16 +133,20 @@ def execute_action(db: Session, action_id) -> RecoveryAction:
 
     # --- RE-EVALUATE POLICY (authoritative) ------------------------------
     policy = evaluate_policy(ctx, diagnosis, prediction,
-                             _canonical_payment_link_strategy(strategy.confidence))
+                             _canonical_payment_link_strategy(strategy.confidence),
+                             intent=intent)
     action.strategy_action = strategy.action.value
     action.policy_verdict = policy.verdict.value
     action.policy_json = policy.model_dump(mode="json")
     audit_action(db, action, "POLICY_ENGINE", "ACTION_POLICY_CHECKED",
                  f"Re-evaluated policy for execution: {policy.verdict.value} "
-                 f"(risk {policy.risk_level.value}) — {policy.reason}",
+                 f"(risk {policy.risk_level.value}, intent={intent.classification.value}) "
+                 f"— {policy.reason}",
                  {"verdict": policy.verdict.value,
                   "risk_level": policy.risk_level.value,
-                  "violated_rules": policy.violated_rules})
+                  "violated_rules": policy.violated_rules,
+                  "intent_classification": intent.classification.value,
+                  "intent_confidence": intent.confidence})
     db.commit()
 
     if policy.verdict.value == "REJECTED":
