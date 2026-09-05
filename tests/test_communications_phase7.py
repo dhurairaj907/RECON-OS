@@ -247,24 +247,41 @@ def test_password_reset_rate_limited(unauthenticated_client, monkeypatch):
 
 
 def test_password_reset_sends_real_email_when_configured(unauthenticated_client, monkeypatch, caplog):
+    """Real-mode EMAIL goes through BrevoEmailProvider (HTTPS REST) — see
+    services/communications/providers.py — not smtplib; this fakes the same
+    httpx.Client the Brevo SMS/WhatsApp providers already mock, never a real
+    network call."""
     c = unauthenticated_client
     c.post("/api/v1/auth/register", json={
         "email": "realreset@recon.test", "password": "Password123!", "organization_name": "RealResetOrg",
     })
     monkeypatch.setattr(settings, "RECON_COMMUNICATIONS_MODE", "real")
-    monkeypatch.setattr(settings, "SMTP_HOST", "smtp.example.com")
+    monkeypatch.setattr(settings, "BREVO_API_KEY", "test-brevo-key")
     monkeypatch.setattr(settings, "SMTP_FROM_EMAIL", "no-reply@recon.test")
-    _FakeSMTP.mode = "ok"
-    _FakeSMTP.instances = []
-    monkeypatch.setattr("smtplib.SMTP", _FakeSMTP)
+
+    captured = {}
+
+    class _Resp:
+        status_code = 201
+        def json(self):
+            return {"messageId": "<reset-test@smtp-relay.brevo.com>"}
+
+    class _FakeHttpxClient:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def post(self, url, json=None, headers=None, **k):
+            captured["url"] = url
+            captured["json"] = json
+            return _Resp()
+
+    monkeypatch.setattr("services.communications.providers.httpx.Client", lambda *a, **k: _FakeHttpxClient())
 
     res = c.post("/api/v1/auth/forgot-password", json={"email": "realreset@recon.test"})
     assert res.status_code == 200
     assert "token" not in res.text.lower().replace("please log in", "")
     # A real send was actually attempted via the real provider.
-    assert len(_FakeSMTP.instances) == 1
-    sent_body = _FakeSMTP.instances[0].sent[0][2]
-    assert "reset-password?token=" in sent_body
+    assert captured["url"] == "https://api.brevo.com/v3/smtp/email"
+    assert "reset-password?token=" in captured["json"]["textContent"]
 
 
 def test_password_reset_never_logs_plaintext_token_in_real_mode(unauthenticated_client, monkeypatch, caplog):

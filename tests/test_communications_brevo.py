@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import uuid
 
 import pytest
 
@@ -71,6 +72,40 @@ def smtp_env(monkeypatch):
     yield
 
 
+class _FakeBrevoEmailResp:
+    status_code = 201
+
+    def json(self):
+        return {"messageId": f"<{uuid.uuid4().hex}@smtp-relay.brevo.com>"}
+
+
+class _FakeBrevoHttpxClient:
+    """Fakes services.communications.providers.httpx.Client for
+    BrevoEmailProvider — real-mode EMAIL now goes through Brevo's HTTPS REST
+    API (POST /v3/smtp/email), not smtplib. Never a real network call."""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def post(self, *a, **k):
+        return _FakeBrevoEmailResp()
+
+
+def _brevo_real_email_env(monkeypatch, *, from_email="sender@example.com"):
+    """Selects the real Brevo REST email provider with a faked HTTP
+    transport — the real-mode-email counterpart to the smtp_env fixture
+    above, which still exercises SmtpEmailProvider directly and is
+    unaffected by this."""
+    monkeypatch.setattr(settings, "RECON_COMMUNICATIONS_MODE", "real")
+    monkeypatch.setattr(settings, "BREVO_API_KEY", "test-brevo-key")
+    monkeypatch.setattr(settings, "SMTP_FROM_EMAIL", from_email)
+    monkeypatch.setattr("services.communications.providers.httpx.Client",
+                        lambda *a, **k: _FakeBrevoHttpxClient())
+
+
 # ===========================================================================
 # Message-ID generation — real, deterministic-per-send, never fabricated
 # ===========================================================================
@@ -95,14 +130,16 @@ def test_smtp_provider_message_id_uses_from_domain_not_hostname(smtp_env):
     assert result.provider_message_id.endswith("@example.com")
 
 
-def test_provider_message_id_persisted_via_send_communication(db_session, razorpay_env, smtp_env, monkeypatch):
-    monkeypatch.setattr(settings, "RECON_COMMUNICATIONS_MODE", "real")
+def test_provider_message_id_persisted_via_send_communication(db_session, razorpay_env, monkeypatch):
+    """Real-mode EMAIL now resolves to BrevoEmailProvider (HTTPS REST) — see
+    services/communications/providers.py's _REAL registry."""
+    _brevo_real_email_env(monkeypatch)
     case = _analyzed_case(db_session, upi_timeout_payload())
     comm = send_communication(db_session, merchant_id=case.merchant_id, case=case,
                               channel="EMAIL", message_type="PAYMENT_FAILED")
     assert comm.status == "SENT"
     assert comm.provider_message_id
-    assert comm.provider == "SMTP_EMAIL"
+    assert comm.provider == "BREVO_EMAIL"
 
 
 # ===========================================================================
@@ -186,19 +223,11 @@ def test_brevo_token_never_falls_back_to_unsigned_allowance(monkeypatch):
 # Brevo webhook endpoint — end-to-end via the real HTTP route
 # ===========================================================================
 def _send_real_email(client, monkeypatch, smtp_env_active=True):
-    """Sends one message via the real send endpoint with the real SMTP
-    provider path selected (mode='real'), but the actual network transport
+    """Sends one message via the real send endpoint with the real Brevo REST
+    email provider selected (mode='real'), but the actual network transport
     is ALWAYS faked here — this must never attempt a real connection to
-    whatever SMTP_HOST happens to be configured in the loaded .env, and must
-    never send a real email to any test-fixture address."""
-    monkeypatch.setattr(settings, "RECON_COMMUNICATIONS_MODE", "real")
-    monkeypatch.setattr(settings, "SMTP_HOST", "smtp-relay.brevo.com")
-    monkeypatch.setattr(settings, "SMTP_FROM_EMAIL", "sender@example.com")
-    monkeypatch.setattr(settings, "SMTP_USERNAME", "")
-    monkeypatch.setattr(settings, "SMTP_USE_SSL", False)
-    _FakeSMTP.instances = []
-    monkeypatch.setattr("smtplib.SMTP", _FakeSMTP)
-    monkeypatch.setattr("smtplib.SMTP_SSL", _FakeSMTP)
+    Brevo, and must never send a real email to any test-fixture address."""
+    _brevo_real_email_env(monkeypatch)
     cn = _api_analyzed_case(client)
     res = client.post(f"/api/v1/recovery-cases/{cn}/communications/send", json={
         "channel": "EMAIL", "message_type": "PAYMENT_FAILED",
@@ -345,14 +374,7 @@ def test_brevo_webhook_organization_isolation(unauthenticated_client, monkeypatc
     (there isn't one), and each org's Communication rows are still separately
     scoped by merchant_id underneath."""
     monkeypatch.setattr(settings, "BREVO_WEBHOOK_TOKEN", "correct_token")
-    monkeypatch.setattr(settings, "RECON_COMMUNICATIONS_MODE", "real")
-    monkeypatch.setattr(settings, "SMTP_HOST", "smtp-relay.brevo.com")
-    monkeypatch.setattr(settings, "SMTP_FROM_EMAIL", "sender@example.com")
-    monkeypatch.setattr(settings, "SMTP_USERNAME", "")
-    monkeypatch.setattr(settings, "SMTP_USE_SSL", False)
-    _FakeSMTP.instances = []
-    monkeypatch.setattr("smtplib.SMTP", _FakeSMTP)
-    monkeypatch.setattr("smtplib.SMTP_SSL", _FakeSMTP)
+    _brevo_real_email_env(monkeypatch)
     c = unauthenticated_client
     c.post("/api/v1/auth/register", json={
         "email": "brevo-org-a@recon.test", "password": "Password123!", "organization_name": "Brevo Org A",

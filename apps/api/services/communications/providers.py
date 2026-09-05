@@ -151,6 +151,88 @@ class SmtpEmailProvider(CommunicationProvider):
                                   error_message="SMTP transport error.")
 
 
+class BrevoEmailProvider(CommunicationProvider):
+    """
+    Real Brevo transactional email via REST — POST
+    https://api.brevo.com/v3/smtp/email, `api-key` header — see
+    developers.brevo.com/reference/sendtransacemail. Added because Render's
+    Free plan has no Shell access, so outbound SMTP from the deployed
+    container cannot be reliably exercised/diagnosed; HTTPS REST works
+    identically to the SMS/WhatsApp Brevo providers already in this file
+    and needs no SMTP port to be reachable.
+
+    SmtpEmailProvider above is left completely intact for local dev/
+    backward compatibility — this is an ADDITIONAL provider, not a
+    replacement of that class; only the _REAL registry's EMAIL entry
+    changes to use this one.
+
+    Reuses the existing SMTP_FROM_EMAIL setting as the sender address so
+    existing configuration stays compatible — no new "from" setting is
+    introduced (BREVO_SMS_SENDER/BREVO_WHATSAPP_SENDER are channel-specific
+    to their own APIs; email's sender identity is already SMTP_FROM_EMAIL).
+    """
+    name = "BREVO_EMAIL"
+    _API_URL = "https://api.brevo.com/v3/smtp/email"
+
+    def send(self, *, to: str, subject: str, body: str,
+              template_id: Optional[str] = None, template_vars: Optional[dict] = None) -> ProviderResult:
+        if not settings.BREVO_API_KEY:
+            return ProviderResult(ok=False, provider=self.name, error_code="NOT_CONFIGURED",
+                                  error_message="BREVO_API_KEY is not set.")
+        if not settings.SMTP_FROM_EMAIL:
+            return ProviderResult(ok=False, provider=self.name, error_code="NOT_CONFIGURED",
+                                  error_message="SMTP_FROM_EMAIL is not set.")
+        if not to:
+            return ProviderResult(ok=False, provider=self.name, error_code="NO_RECIPIENT",
+                                  error_message="No recipient email address provided.")
+
+        payload: Dict[str, Any] = {
+            "sender": {"email": settings.SMTP_FROM_EMAIL},
+            "to": [{"email": to}],
+            "subject": subject,
+            "textContent": body,
+        }
+        headers = {"api-key": settings.BREVO_API_KEY, "Content-Type": "application/json"}
+        try:
+            with httpx.Client(timeout=10) as client:
+                resp = client.post(self._API_URL, json=payload, headers=headers)
+        except httpx.TimeoutException:
+            logger.warning("Brevo email API request timed out")
+            return ProviderResult(ok=False, provider=self.name, error_code="TRANSPORT_ERROR",
+                                  error_message="Brevo email API request timed out.")
+        except httpx.HTTPError:
+            logger.warning("Brevo email API transport error")
+            return ProviderResult(ok=False, provider=self.name, error_code="TRANSPORT_ERROR",
+                                  error_message="Brevo email API unreachable.")
+
+        if resp.status_code in (401, 403):
+            # Never log the response body — it can echo request/key context.
+            logger.warning("Brevo email API rejected the request: HTTP %s", resp.status_code)
+            return ProviderResult(ok=False, provider=self.name, error_code="BREVO_AUTH_ERROR",
+                                  error_message="Brevo rejected the API key.")
+        if resp.status_code >= 400:
+            logger.warning("Brevo email API error: HTTP %s", resp.status_code)
+            return ProviderResult(ok=False, provider=self.name, error_code=f"HTTP_{resp.status_code}",
+                                  error_message="Brevo email API rejected the request.")
+        try:
+            resp_payload = resp.json()
+        except ValueError:
+            resp_payload = {}
+        # Brevo's REST response wraps messageId in RFC 5322 angle brackets
+        # (e.g. "<abc@smtp-relay.mailin.fr>"), same as SmtpEmailProvider's
+        # own Message-ID above — canonicalize identically (strip brackets)
+        # so the stored provider_message_id matches what
+        # brevo_webhook.py::_canonical_message_id() looks up from a later
+        # delivery-status webhook, which strips brackets on the inbound side
+        # regardless of which form the sender used.
+        raw_message_id = _extract_provider_message_id(resp_payload)
+        # A successful submission means Brevo ACCEPTED the request — never
+        # DELIVERED, which only a real delivery confirmation can claim (see
+        # services/communications/brevo_webhook.py, unchanged by this work).
+        return ProviderResult(ok=True, status="SENT", provider=self.name,
+                              provider_message_id=_strip_angle_brackets(raw_message_id) if raw_message_id else None)
+
+
 def _extract_provider_message_id(payload: dict) -> Optional[str]:
     """Best-effort extraction across the field names common generic SMS/WhatsApp
     HTTP APIs use — never invents one when the provider didn't return any."""
@@ -409,7 +491,7 @@ class BrevoWhatsAppProvider(CommunicationProvider):
 
 
 _FAKE = {"EMAIL": FakeEmailProvider, "SMS": FakeSMSProvider, "WHATSAPP": FakeWhatsAppProvider}
-_REAL = {"EMAIL": SmtpEmailProvider, "SMS": BrevoSmsProvider, "WHATSAPP": BrevoWhatsAppProvider}
+_REAL = {"EMAIL": BrevoEmailProvider, "SMS": BrevoSmsProvider, "WHATSAPP": BrevoWhatsAppProvider}
 
 
 def get_communication_provider(channel: str) -> CommunicationProvider:

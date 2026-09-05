@@ -1,12 +1,19 @@
 """
-RECON OS — Real Brevo SMS/WhatsApp provider tests.
+RECON OS — Real Brevo email/SMS/WhatsApp provider tests.
 
-Covers BrevoSmsProvider / BrevoWhatsAppProvider (services/communications/
-providers.py) at the unit level (mocked httpx.Client — never a real network
-call), plus end-to-end send_communication() tests proving the EXISTING
-idempotency/rate-limit/opt-out layer (services/communications/service.py,
-UNCHANGED by this work) still holds correctly when RECON_COMMUNICATIONS_MODE
-is switched to "real" and the registry resolves to the new Brevo classes.
+Covers BrevoEmailProvider / BrevoSmsProvider / BrevoWhatsAppProvider
+(services/communications/providers.py) at the unit level (mocked
+httpx.Client — never a real network call), plus end-to-end
+send_communication() tests proving the EXISTING idempotency/rate-limit/
+opt-out layer (services/communications/service.py, UNCHANGED by this work)
+still holds correctly when RECON_COMMUNICATIONS_MODE is switched to "real"
+and the registry resolves to the Brevo classes for all three channels.
+
+BrevoEmailProvider was added because Render's Free plan has no Shell access
+to reliably exercise/diagnose outbound SMTP from the deployed container —
+production EMAIL now goes through Brevo's HTTPS REST API instead.
+SmtpEmailProvider itself is completely unmodified and still covered by its
+own existing tests (test_communications_phase7.py) for local dev.
 
 Nothing here ever calls Brevo for real — every test either calls the
 provider class directly with a faked httpx.Client, or drives
@@ -21,6 +28,7 @@ import pytest
 from config import settings
 from models.communication import Communication
 from services.communications.providers import (
+    BrevoEmailProvider,
     BrevoSmsProvider,
     BrevoWhatsAppProvider,
     _normalize_phone_for_brevo,
@@ -74,6 +82,7 @@ def _patch_client(monkeypatch, responses):
 
 def _brevo_env(monkeypatch):
     monkeypatch.setattr(settings, "BREVO_API_KEY", "brevo-secret-DO-NOT-LEAK")
+    monkeypatch.setattr(settings, "SMTP_FROM_EMAIL", "recon@example.com")
     monkeypatch.setattr(settings, "BREVO_SMS_SENDER", "RECONS")
     monkeypatch.setattr(settings, "BREVO_WHATSAPP_SENDER", "919999999999")
     monkeypatch.setattr(settings, "BREVO_WHATSAPP_TEMPLATE_IDS", "PAYMENT_LINK_CREATED=101,PAYMENT_RECOVERY=102")
@@ -94,6 +103,181 @@ def test_normalize_phone_malformed_returns_none():
     assert _normalize_phone_for_brevo("not-a-number") is None
     assert _normalize_phone_for_brevo("") is None
     assert _normalize_phone_for_brevo(None) is None
+
+
+# ===========================================================================
+# BrevoEmailProvider — unit tests (mocked httpx)
+# ===========================================================================
+def test_email_missing_api_key_is_not_configured(monkeypatch):
+    monkeypatch.setattr(settings, "BREVO_API_KEY", "")
+    monkeypatch.setattr(settings, "SMTP_FROM_EMAIL", "recon@example.com")
+    result = BrevoEmailProvider().send(to="a@b.com", subject="s", body="b")
+    assert result.ok is False
+    assert result.error_code == "NOT_CONFIGURED"
+    assert "BREVO_API_KEY" in result.error_message
+
+
+def test_email_missing_sender_is_not_configured(monkeypatch):
+    monkeypatch.setattr(settings, "BREVO_API_KEY", "k")
+    monkeypatch.setattr(settings, "SMTP_FROM_EMAIL", "")
+    result = BrevoEmailProvider().send(to="a@b.com", subject="s", body="b")
+    assert result.ok is False
+    assert result.error_code == "NOT_CONFIGURED"
+    assert "SMTP_FROM_EMAIL" in result.error_message
+
+
+def test_email_missing_recipient(monkeypatch):
+    _brevo_env(monkeypatch)
+    result = BrevoEmailProvider().send(to="", subject="s", body="b")
+    assert result.ok is False
+    assert result.error_code == "NO_RECIPIENT"
+
+
+def test_email_success_correct_endpoint_headers_and_body(monkeypatch):
+    _brevo_env(monkeypatch)
+    fake = _patch_client(monkeypatch, [_Resp(201, {"messageId": "<abc123@brevo.com>"})])
+    result = BrevoEmailProvider().send(to="customer@example.com", subject="RECON OS SMTP Test",
+                                       body="This is a controlled RECON OS test.")
+
+    assert result.ok is True
+    assert result.status == "SENT"
+    assert result.provider == "BREVO_EMAIL"
+    # Angle brackets stripped — must match what brevo_webhook.py's inbound
+    # canonicalization looks up later, see BrevoEmailProvider's docstring.
+    assert result.provider_message_id == "abc123@brevo.com"
+
+    assert len(fake.calls) == 1
+    call = fake.calls[0]
+    assert call["url"] == "https://api.brevo.com/v3/smtp/email"
+    assert call["headers"]["api-key"] == "brevo-secret-DO-NOT-LEAK"
+    assert call["headers"]["Content-Type"] == "application/json"
+    assert call["json"]["sender"] == {"email": "recon@example.com"}
+    assert call["json"]["to"] == [{"email": "customer@example.com"}]
+    assert call["json"]["subject"] == "RECON OS SMTP Test"
+    assert call["json"]["textContent"] == "This is a controlled RECON OS test."
+
+
+def test_email_auth_error_distinguished(monkeypatch):
+    _brevo_env(monkeypatch)
+    _patch_client(monkeypatch, [_Resp(401, {"message": "invalid api key"})])
+    result = BrevoEmailProvider().send(to="a@b.com", subject="s", body="b")
+    assert result.ok is False
+    assert result.error_code == "BREVO_AUTH_ERROR"
+
+
+def test_email_forbidden_error_distinguished(monkeypatch):
+    _brevo_env(monkeypatch)
+    _patch_client(monkeypatch, [_Resp(403, {"message": "forbidden"})])
+    result = BrevoEmailProvider().send(to="a@b.com", subject="s", body="b")
+    assert result.ok is False
+    assert result.error_code == "BREVO_AUTH_ERROR"
+
+
+def test_email_provider_rejection_normalized(monkeypatch):
+    _brevo_env(monkeypatch)
+    _patch_client(monkeypatch, [_Resp(400, {"code": "invalid_parameter", "message": "bad sender"})])
+    result = BrevoEmailProvider().send(to="a@b.com", subject="s", body="b")
+    assert result.ok is False
+    assert result.error_code == "HTTP_400"
+
+
+def test_email_transport_error_normalized(monkeypatch):
+    _brevo_env(monkeypatch)
+
+    class _RaisingClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def post(self, *a, **k):
+            raise httpx.ConnectError("boom")
+
+    monkeypatch.setattr("services.communications.providers.httpx.Client", lambda *a, **k: _RaisingClient())
+    result = BrevoEmailProvider().send(to="a@b.com", subject="s", body="b")
+    assert result.ok is False
+    assert result.error_code == "TRANSPORT_ERROR"
+
+
+def test_email_timeout_error_normalized(monkeypatch):
+    _brevo_env(monkeypatch)
+
+    class _TimingOutClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def post(self, *a, **k):
+            raise httpx.TimeoutException("slow")
+
+    monkeypatch.setattr("services.communications.providers.httpx.Client", lambda *a, **k: _TimingOutClient())
+    result = BrevoEmailProvider().send(to="a@b.com", subject="s", body="b")
+    assert result.ok is False
+    assert result.error_code == "TRANSPORT_ERROR"
+
+
+def test_email_malformed_json_response_still_succeeds_without_message_id(monkeypatch):
+    """A 2xx with an unparsable body must not crash — no message id is
+    fabricated, but the send is still recorded as accepted."""
+    _brevo_env(monkeypatch)
+
+    class _MalformedResp:
+        status_code = 201
+
+        def json(self):
+            raise ValueError("not json")
+
+    class _Client:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def post(self, *a, **k):
+            return _MalformedResp()
+
+    monkeypatch.setattr("services.communications.providers.httpx.Client", lambda *a, **k: _Client())
+    result = BrevoEmailProvider().send(to="a@b.com", subject="s", body="b")
+    assert result.ok is True
+    assert result.status == "SENT"
+    assert result.provider_message_id is None
+
+
+def test_email_message_id_brackets_stripped_for_webhook_correlation(monkeypatch):
+    """Regression: Brevo's REST response wraps messageId in RFC 5322 angle
+    brackets. If stored as-is, a later delivery webhook (which canonicalizes
+    the inbound message-id by stripping brackets — see
+    brevo_webhook.py::_canonical_message_id) would never match this row,
+    silently breaking SENT -> DELIVERED correlation for every real email."""
+    _brevo_env(monkeypatch)
+    _patch_client(monkeypatch, [_Resp(201, {"messageId": "<xyz-789@smtp-relay.mailin.fr>"})])
+    result = BrevoEmailProvider().send(to="a@b.com", subject="s", body="b")
+    assert result.provider_message_id == "xyz-789@smtp-relay.mailin.fr"
+    assert "<" not in result.provider_message_id
+    assert ">" not in result.provider_message_id
+
+
+def test_email_message_id_without_brackets_unaffected(monkeypatch):
+    _brevo_env(monkeypatch)
+    _patch_client(monkeypatch, [_Resp(201, {"messageId": "no-brackets@smtp-relay.mailin.fr"})])
+    result = BrevoEmailProvider().send(to="a@b.com", subject="s", body="b")
+    assert result.provider_message_id == "no-brackets@smtp-relay.mailin.fr"
+
+
+def test_email_key_never_in_url_only_header(monkeypatch):
+    """Same secrecy contract as the SMS/WhatsApp Brevo providers: the key
+    goes in a header, never the URL, and is never echoed into the result."""
+    _brevo_env(monkeypatch)
+    monkeypatch.setattr(settings, "BREVO_API_KEY", "SECRET-KEY-DO-NOT-LEAK")
+    fake = _patch_client(monkeypatch, [_Resp(201, {"messageId": "m1"})])
+    result = BrevoEmailProvider().send(to="a@b.com", subject="s", body="b")
+    assert "SECRET-KEY-DO-NOT-LEAK" not in fake.calls[0]["url"]
+    assert fake.calls[0]["headers"]["api-key"] == "SECRET-KEY-DO-NOT-LEAK"
+    assert "SECRET-KEY-DO-NOT-LEAK" not in str(result)
 
 
 # ===========================================================================
@@ -240,9 +424,9 @@ def test_whatsapp_provider_rejection_normalized(monkeypatch):
 # ===========================================================================
 def test_registry_real_mode_resolves_brevo_classes(monkeypatch):
     monkeypatch.setattr(settings, "RECON_COMMUNICATIONS_MODE", "real")
+    assert get_communication_provider("EMAIL").name == "BREVO_EMAIL"
     assert get_communication_provider("SMS").name == "BREVO_SMS"
     assert get_communication_provider("WHATSAPP").name == "BREVO_WHATSAPP"
-    assert get_communication_provider("EMAIL").name == "SMTP_EMAIL"
 
 
 def test_registry_fake_mode_unaffected(monkeypatch):
@@ -268,33 +452,16 @@ def _real_mode_case(db_session, monkeypatch):
 
 
 def test_duplicate_email_prevented_in_real_mode(db_session, razorpay_env, monkeypatch):
+    """Real-mode EMAIL now goes through BrevoEmailProvider (HTTPS REST), not
+    smtplib — mocks the same httpx.Client used by SMS/WhatsApp above."""
     case = _real_mode_case(db_session, monkeypatch)
-
-    class _FakeSmtp:
-        def __init__(self, *a, **k):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *a):
-            return False
-
-        def starttls(self):
-            pass
-
-        def sendmail(self, *a, **k):
-            pass
-
-    monkeypatch.setattr(settings, "SMTP_HOST", "smtp-relay.brevo.com")
-    monkeypatch.setattr(settings, "SMTP_FROM_EMAIL", "no-reply@example.com")
-    monkeypatch.setattr("smtplib.SMTP", _FakeSmtp)
+    _patch_client(monkeypatch, [_Resp(201, {"messageId": "e1"}), _Resp(201, {"messageId": "e2"})])
 
     c1 = send_communication(db_session, merchant_id=case.merchant_id, case=case,
                             channel="EMAIL", message_type="PAYMENT_RECOVERY")
     c2 = send_communication(db_session, merchant_id=case.merchant_id, case=case,
                             channel="EMAIL", message_type="PAYMENT_RECOVERY")
-    assert c1.status == "SENT" and c1.provider == "SMTP_EMAIL"
+    assert c1.status == "SENT" and c1.provider == "BREVO_EMAIL"
     assert c2.status == "SKIPPED" and c2.skipped_reason == "DUPLICATE"
     sent = (
         db_session.query(Communication)
